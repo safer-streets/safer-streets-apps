@@ -1,0 +1,13 @@
+__pycache__
+.ruff_cache
+.mypy_cache
+.env
+.venv*
+.vscode
+site/
+data/
+# OSM
+cache/
+output/
+
+uv.lock
