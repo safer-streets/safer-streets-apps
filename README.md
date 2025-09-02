@@ -23,7 +23,11 @@ not delete (yet)!**
 
 ## TODO
 
-- [ ] Docker-compose implementation with full datasets in a volume...
+- [ ] Multipage app - v2 of explorer (using area), another page measuring persistence of areas
+- [ ] Docker-compose implementation with full datasets on the cloud or in a volume...
 - [ ] ...then remove redundant demo branch
 
+## Referemces
+
+- [Multipage app tutorial](https://docs.streamlit.io/get-started/tutorials/create-a-multipage-app)
 

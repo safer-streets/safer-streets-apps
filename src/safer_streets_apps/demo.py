@@ -31,9 +31,9 @@ def cache_crime_data(force: Force, category: str) -> tuple[gpd.GeoDataFrame, gpd
 st.set_page_config(layout="wide", page_title="Safer Streets", page_icon="👮")
 
 geographies = {
-    "Middle layer super output area (census)": ("MSOA", {}),
-    "Lower layer super output area (census)": ("LSOA", {}),
-    "Output Area (census)": ("OA", {}),
+    "Middle layer super output area (census)": ("MSOA21", {}),
+    "Lower layer super output area (census)": ("LSOA21", {}),
+    "Output Area (census)": ("OA21", {}),
     "Grid 800m": ("GRID", {"size": 800.0}),
     "Grid 400m": ("GRID", {"size": 400.0}),
     "Grid 200m": ("GRID", {"size": 200.0}),

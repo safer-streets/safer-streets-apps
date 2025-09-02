@@ -15,7 +15,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.uv.sources]
-safer-streets-core = { git = "https://github.com/safer-streets/safer-streets-core" }
+safer-streets-core = { path = "../safer-streets-core" }
 
 [tool.ruff]
 line-length = 120
