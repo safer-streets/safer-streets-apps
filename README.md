@@ -31,10 +31,10 @@ Build a safer-streets-core wheel and copy it to this folder (use `uv build`).
 
 ### Build
 
-NB this includes the `data-local` folder (West Yorkshire only)
+NB this includes the `data-local` folder (West Yorkshire only) and the Dockerfile hard-codes this location
 
 ```sh
-docker build -t safer-streets-apps .
+docker build -t ghcr.io/safer-streets/safer-streets-apps .
 ```
 
 ### Run
@@ -42,8 +42,17 @@ docker build -t safer-streets-apps .
 This command runs the app using data stored within it:
 
 ```sh
-docker run -e SAFER_STREETS_DATA_DIR=/app/data-local -p8501:8501 safer-streets-apps
+docker run -p8501:8501 ghcr.io/safer-streets/safer-streets-apps
 ```
+
+### Push
+
+This requires a PAT.
+
+```sh
+docker push ghcr.io/safer-streets/safer-streets-apps
+```
+
 
 ## Note
 
