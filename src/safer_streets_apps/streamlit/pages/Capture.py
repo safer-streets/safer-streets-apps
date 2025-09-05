@@ -37,8 +37,10 @@ geographies = {
     "Output Areas (census)": ("OA21", {}),
     "800m grid": ("GRID", {"size": 800.0}),
     "400m grid": ("GRID", {"size": 400.0}),
+    "200m grid": ("GRID", {"size": 400.0}),
     "500m hexes": ("HEX", {"size": 500.0}),
     "250m hexes": ("HEX", {"size": 250.0}),
+    "125m hexes": ("HEX", {"size": 250.0}),
 }
 
 st.set_page_config(page_title="Crime Capture", page_icon="🌍")
@@ -55,11 +57,14 @@ def main() -> None:
 The app uses police.uk public crime data to determine, given a target total land area, the maximimum number of
 crimes of a given type that can be captured within that area, in any given month, over the last 3 years. The interactive
 map displays the "hot" areas (in yellow) with the height in proportion to the crime count, and - optionally - other crime-
-containing areas (blue). Below the map graphs are displayed of the percentage of crimes captured and the Gini index
+containing areas (blue). The height of the features can be adjusted if necessary using the "Elevation scale" slider in
+the sidebar.
+
+Below the map graphs are displayed of the percentage of crimes captured and the Gini index
 over time. To view the animation, in the sidebar:
 
 1. Select the Force Area, Crime Type and Spatial Unit.
-2. Adjust the the land area you want to cover.
+2. Adjust the the land area you want to cover, and the number of months to look back.
 3. Hit "Run..."
 """
         )
@@ -84,10 +89,22 @@ over time. To view the animation, in the sidebar:
             help="Focus on the spatial units comprising the desired percentage of total crimes",
         )
 
+        lookback_window = st.sidebar.slider(
+            "Lookback window",
+            min_value=1,
+            max_value=12,
+            value=1,
+            step=1,
+            help="Number of months of data to aggregate at each step",
+        )
+
         show_missed = st.sidebar.checkbox(
             "Show areas not captured",
             help="Areas that contain some crimes, but not enough to feature in the 'hot' list",
         )
+
+        elevation_scale = st.sidebar.slider("Elevation scale", min_value=100, max_value=300, value=150, step=10,
+                                            help="Adjust the vertical scale")
 
         # map crimes to features
         centroid_lat, centroid_lon = raw_data.lat.mean(), raw_data.lon.mean()
@@ -122,18 +139,17 @@ over time. To view the animation, in the sidebar:
             filled=False,
             extruded=False,
             line_width_min_pixels=3,
-            # get_fill_color=[0, 0, 200, 80],  # 180, 0, 200, 80
             get_line_color=[192, 64, 64, 255],
         )
 
-        def render(m: str, c: pd.Series) -> None:
-            weighted_counts = pd.concat([c.rename("n_crimes"), features.area_km2], axis=1)
+        def render(period: str, counts: pd.Series) -> None:
+            weighted_counts = pd.concat([counts.rename("n_crimes"), features.area_km2], axis=1)
             weighted_counts["density"] = weighted_counts.n_crimes / weighted_counts.area_km2
             weighted_counts.sort_values(by="density")
             weighted_counts = weighted_counts.sort_values(by="density")
             weighted_counts["cum_area"] = weighted_counts.area_km2.cumsum()
 
-            gini, _ = calc_gini(c)
+            gini, _ = calc_gini(counts)
 
             # deal with case where we've captured all incidents in a smaller area than specified
             captured_features = features[["geometry"]].join(
@@ -141,18 +157,18 @@ over time. To view the animation, in the sidebar:
                 how="right",
             )
 
-            coverage = captured_features.n_crimes.sum() / c.sum()
+            coverage = captured_features.n_crimes.sum() / counts.sum()
 
             title.markdown(f"""
-                ### {m}: {captured_features.area_km2.sum():.1f}km² of land area contains {coverage:.1%} of {category}
+                ### {period}: {captured_features.area_km2.sum():.1f}km² of land area contains {coverage:.1%} of {category}
 
                 {len(captured_features) / num_features:.1%} ({len(captured_features)}/{num_features}) of {spatial_unit_name}
 
                 **Gini Coefficient = {gini:.2f}**
 
                 """)
-            stats.loc[m, "Percent Captured"] = coverage * 100
-            stats.loc[m, "Gini"] = gini * 100
+            stats.loc[period, "Percent Captured"] = coverage * 100
+            stats.loc[period, "Gini"] = gini * 100
             graph.line_chart(stats, x_label="Mon")
 
             layers = [
@@ -168,7 +184,7 @@ over time. To view the animation, in the sidebar:
                     get_fill_color=[0xC9, 0xF1, 0x00, 0xA0],  # [255, 0, 0, 160],
                     get_line_color=[255, 255, 255, 255],
                     # pickable=True,
-                    elevation_scale=20,
+                    elevation_scale=elevation_scale,
                     get_elevation="properties.n_crimes",
                 ),
             ]
@@ -191,7 +207,7 @@ over time. To view the animation, in the sidebar:
                         get_fill_color=[0x00, 0x39, 0xF5, 0x50],  # [255, 0, 0, 160],
                         get_line_color=[255, 255, 255, 255],
                         # pickable=True,
-                        elevation_scale=20,
+                        elevation_scale=elevation_scale,
                         get_elevation="properties.n_crimes",
                     )
                 )
@@ -201,15 +217,15 @@ over time. To view the animation, in the sidebar:
             )
 
         def render_static() -> None:
-            m = str(all_months[0])
-            if m not in counts.columns:
-                st.error(f"No data for {m}")
-            else:
-                render(m, counts[m])
+            months = [str(m) for m in all_months[:lookback_window]]
+
+            period = f"{months[0]} to {months[-1]}" if len(months) > 1 else months[0]
+            render(period, counts[months].mean(axis=1))
 
         def render_dynamic() -> None:
-            for m, c in counts.items():
-                render(m, c)
+            for month_window in Itr(all_months).rolling(lookback_window).collect():
+                period = f"{month_window[0]} to {month_window[-1]}" if len(month_window) > 1 else str(month_window[0])
+                render(period, counts[[str(m) for m in month_window]].mean(axis=1))
                 sleep(0.5)
 
         run_button = st.sidebar.empty()
