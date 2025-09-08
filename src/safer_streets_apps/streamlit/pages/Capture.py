@@ -17,12 +17,11 @@ from safer_streets_core.utils import (
     monthgen,
 )
 
-# streamlit seems to break load_dotenv
 LATEST_DATE = latest_month()
 all_months = Itr(monthgen(LATEST_DATE, backwards=True)).take(36).rev().collect()
 
 
-# @st.cache_data
+@st.cache_data
 def cache_crime_data(force: Force, category: str) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
     force_boundary = get_force_boundary(force)
     data = load_crime_data(force, all_months, filters={"Crime type": category}, keep_lonlat=True)
@@ -54,11 +53,11 @@ def main() -> None:
     with st.expander("Help"):
         st.markdown(
             """
-The app uses police.uk public crime data to determine, given a target total land area, the maximimum number of
-crimes of a given type that can be captured within that area, in any given month, over the last 3 years. The interactive
-map displays the "hot" areas (in yellow) with the height in proportion to the crime count, and - optionally - other crime-
-containing areas (blue). The height of the features can be adjusted if necessary using the "Elevation scale" slider in
-the sidebar.
+The app uses police.uk public crime data to determine, given a target total land area, the maximum number of
+crimes of a given type that can be captured within that area, in the chosen time window, for every month over the
+last 3 years. The interactive map displays the "hot" areas (in yellow) with the height in proportion to the crime count,
+and - optionally - other crime- containing areas (blue). The height of the features can be adjusted if necessary using
+the "Elevation scale" slider in the sidebar.
 
 Below the map graphs are displayed of the percentage of crimes captured and the Gini index
 over time. To view the animation, in the sidebar:
@@ -69,7 +68,7 @@ over time. To view the animation, in the sidebar:
 """
         )
 
-    st.sidebar.header("Concentration")
+    st.sidebar.header("Capture")
 
     force = st.sidebar.selectbox("Force Area", get_args(Force), index=43)  # default="West Yorkshire"
 
@@ -86,7 +85,7 @@ over time. To view the animation, in the sidebar:
             boundary.area.sum() / 1_000_000,
             step=10.0,
             value=100.0,
-            help="Focus on the spatial units comprising the desired percentage of total crimes",
+            help="Focus on the smallest land area that captures the most crime",
         )
 
         lookback_window = st.sidebar.slider(
@@ -103,8 +102,9 @@ over time. To view the animation, in the sidebar:
             help="Areas that contain some crimes, but not enough to feature in the 'hot' list",
         )
 
-        elevation_scale = st.sidebar.slider("Elevation scale", min_value=100, max_value=300, value=150, step=10,
-                                            help="Adjust the vertical scale")
+        elevation_scale = st.sidebar.slider(
+            "Elevation scale", min_value=100, max_value=300, value=150, step=10, help="Adjust the vertical scale"
+        )
 
         # map crimes to features
         centroid_lat, centroid_lon = raw_data.lat.mean(), raw_data.lon.mean()
@@ -123,6 +123,8 @@ over time. To view the animation, in the sidebar:
         stats = pd.DataFrame(columns=["Gini", "Percent Captured"])
 
         st.toast("Data loaded")
+
+        tooltip = {"html": "{n_crimes} crimes"}
 
         view_state = pdk.ViewState(
             latitude=centroid_lat,
@@ -145,7 +147,6 @@ over time. To view the animation, in the sidebar:
         def render(period: str, counts: pd.Series) -> None:
             weighted_counts = pd.concat([counts.rename("n_crimes"), features.area_km2], axis=1)
             weighted_counts["density"] = weighted_counts.n_crimes / weighted_counts.area_km2
-            weighted_counts.sort_values(by="density")
             weighted_counts = weighted_counts.sort_values(by="density")
             weighted_counts["cum_area"] = weighted_counts.area_km2.cumsum()
 
@@ -169,7 +170,7 @@ over time. To view the animation, in the sidebar:
                 """)
             stats.loc[period, "Percent Captured"] = coverage * 100
             stats.loc[period, "Gini"] = gini * 100
-            graph.line_chart(stats, x_label="Mon")
+            graph.line_chart(stats, x_label="Month")
 
             layers = [
                 boundary_layer,
@@ -183,7 +184,7 @@ over time. To view the animation, in the sidebar:
                     wireframe=True,
                     get_fill_color=[0xC9, 0xF1, 0x00, 0xA0],  # [255, 0, 0, 160],
                     get_line_color=[255, 255, 255, 255],
-                    # pickable=True,
+                    pickable=True,
                     elevation_scale=elevation_scale,
                     get_elevation="properties.n_crimes",
                 ),
@@ -206,21 +207,15 @@ over time. To view the animation, in the sidebar:
                         wireframe=True,
                         get_fill_color=[0x00, 0x39, 0xF5, 0x50],  # [255, 0, 0, 160],
                         get_line_color=[255, 255, 255, 255],
-                        # pickable=True,
+                        pickable=True,
                         elevation_scale=elevation_scale,
                         get_elevation="properties.n_crimes",
                     )
                 )
 
             map_placeholder.pydeck_chart(
-                pdk.Deck(layers=layers, initial_view_state=view_state, tooltip=True), height=720
+                pdk.Deck(layers=layers, initial_view_state=view_state, tooltip=tooltip), height=720
             )
-
-        def render_static() -> None:
-            months = [str(m) for m in all_months[:lookback_window]]
-
-            period = f"{months[0]} to {months[-1]}" if len(months) > 1 else months[0]
-            render(period, counts[months].mean(axis=1))
 
         def render_dynamic() -> None:
             for month_window in Itr(all_months).rolling(lookback_window).collect():
@@ -232,7 +227,7 @@ over time. To view the animation, in the sidebar:
 
         title = st.empty()
         map_placeholder = st.empty()
-        map_placeholder.pydeck_chart(pdk.Deck(layers=[boundary_layer], initial_view_state=view_state))
+        map_placeholder.pydeck_chart(pdk.Deck(layers=[boundary_layer], initial_view_state=view_state), height=720)
 
         graph = st.empty()
 
@@ -240,8 +235,8 @@ over time. To view the animation, in the sidebar:
 
         if run:
             render_dynamic()
-        else:
-            render_static()
+        # else:
+        #     render_static()
     except Exception as e:
         st.error(e)
 
