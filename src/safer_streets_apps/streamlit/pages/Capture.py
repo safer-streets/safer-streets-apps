@@ -36,10 +36,10 @@ geographies = {
     "Output Areas (census)": ("OA21", {}),
     "800m grid": ("GRID", {"size": 800.0}),
     "400m grid": ("GRID", {"size": 400.0}),
-    "200m grid": ("GRID", {"size": 400.0}),
+    "200m grid": ("GRID", {"size": 200.0}),
     "500m hexes": ("HEX", {"size": 500.0}),
     "250m hexes": ("HEX", {"size": 250.0}),
-    "125m hexes": ("HEX", {"size": 250.0}),
+    "125m hexes": ("HEX", {"size": 125.0}),
 }
 
 st.set_page_config(page_title="Crime Capture", page_icon="🌍")

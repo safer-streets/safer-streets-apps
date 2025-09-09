@@ -29,6 +29,11 @@ SAFER_STREETS_DATA_DIR=<insert-here> streamlit run src/safer_streets_apps/stream
 
 Build a safer-streets-core wheel and copy it to this folder (use `uv build`).
 
+This currently relies on temporary manual workarounds:
+
+- Build a wheel for safer-streets-core and copy it to here
+- Make copies of a subset of the input datasets and place them in `./data-local`
+
 ### Build
 
 NB this includes the `data-local` folder (West Yorkshire only) and the Dockerfile hard-codes this location
@@ -52,7 +57,6 @@ This requires a PAT.
 ```sh
 docker push ghcr.io/safer-streets/safer-streets-apps
 ```
-
 
 ## Note
 
