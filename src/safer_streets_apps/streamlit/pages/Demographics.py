@@ -61,14 +61,20 @@ st.logo("./assets/safer-streets-small.png", size="large")
 def main() -> None:
     st.title("Crime Demographics Explorer")
 
-    st.markdown(f"""
-### Data sources
+    with st.expander("Help"):
+        st.markdown(f"""
+The app overlays police.uk public crime data, showing counts of crimes of a given type over the last 3 years, and demographic data from the 2021 UK census.
 
-- Demographic data is from the 2021 UK census - specifically TS021 - Population by ethnic group (OA) - remapped to the
+The interactive map displays the "hot" crime areas extruded and shaded from yellow to red. The colour of each area is given by the count of crimes in
+that area, with red being the highest.
+
+#### Data sources
+
+- Demographic data is from the 2021 UK census - specifically **TS021 - Population by ethnic group (OA)** - remapped to the
                     selected spatial unit
 - Crime data is from police.uk archive from {all_months[0]} to {all_months[-1]}
 
-### Ethnicity explanations:
+#### Ethnicity explanations:
 
 - {"\n - ".join(f"{k}: {v}" for k, v in ethnicities.items())}
 """)
@@ -135,7 +141,7 @@ def main() -> None:
             filled=False,
             extruded=False,
             line_width_min_pixels=3,
-            get_line_color=[192, 64, 64, 255],
+            get_line_color=[64, 64, 192, 255],
         )
 
         layers = [
@@ -148,7 +154,12 @@ def main() -> None:
                 filled=True,
                 extruded=True,
                 wireframe=True,
-                get_fill_color=[0xC9, 0xF1, 0x00, 0xA0],  # [255, 0, 0, 160],
+                get_fill_color="""[
+                        255,
+                        255 - properties.count / 3,
+                        0,
+                        160
+                    ]""",
                 get_line_color=[255, 255, 255, 255],
                 pickable=True,
                 elevation_scale=elevation_scale,
@@ -161,7 +172,7 @@ def main() -> None:
             "Ethnicity breakdown (2021 census):<br/>" + "<br/>".join(f"{eth}: {{{eth}}}" for eth in ethnicities)
         }
 
-        st.pydeck_chart(pdk.Deck(layers=layers, initial_view_state=view_state, tooltip=tooltip), height=960)
+        st.pydeck_chart(pdk.Deck(map_style=st.context.theme.type, layers=layers, initial_view_state=view_state, tooltip=tooltip), height=960)
 
         with st.expander("Table View"):
             st.dataframe(ethnicity.drop("geometry", axis=1))

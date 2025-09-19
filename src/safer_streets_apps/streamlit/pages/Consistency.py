@@ -56,12 +56,8 @@ def main() -> None:
 The app uses police.uk public crime data to determine, how consistently areas feature in the top areas for crimes of a
 given type, over the last 3 years.
 
-The interactive map displays the "hot" areas (in yellow). The height of each area is given by the number of months it features in
-the set of areas capture the most crime. The height of the features can be adjusted if necessary using the "Elevation scale" slider in
-the sidebar.
-
-Below the map graphs are displayed of the percentage of crimes captured, percentage of spatial units, and the Gini index
-over time. To view the animation, in the sidebar:
+The interactive map displays the "hot" areas shaded from yellow to red. The each area is coloured given by the number of months it features in
+the set of areas capture the most crime, with red being the highest.
 
 1. Select the Force Area, Crime Type and Spatial Unit.
 2. Adjust the the land area you want to cover, and the number of months to look back.
@@ -134,7 +130,7 @@ over time. To view the animation, in the sidebar:
             filled=False,
             extruded=False,
             line_width_min_pixels=3,
-            get_line_color=[192, 64, 64, 255],
+            get_line_color=[64, 64, 192, 255],
         )
 
         def render(month: str, area: float, rankings: gpd.GeoDataFrame) -> None:
