@@ -76,6 +76,9 @@ over time. To view the animation, in the sidebar:
 
     spatial_unit_name = st.sidebar.selectbox("Spatial Unit", geographies.keys(), index=0)
 
+    if "running" not in st.session_state:
+        st.session_state.running = False
+
     try:
         raw_data, boundary = cache_crime_data(force, category)
 
@@ -144,6 +147,10 @@ over time. To view the animation, in the sidebar:
             get_line_color=[192, 64, 64, 255],
         )
 
+        title = st.empty()
+        map_placeholder = st.empty()
+
+        @st.fragment
         def render(period: str, counts: pd.Series) -> None:
             weighted_counts = pd.concat([counts.rename("n_crimes"), features.area_km2], axis=1)
             weighted_counts["density"] = weighted_counts.n_crimes / weighted_counts.area_km2
@@ -214,8 +221,15 @@ over time. To view the animation, in the sidebar:
                 )
 
             map_placeholder.pydeck_chart(
-                pdk.Deck(layers=layers, initial_view_state=view_state, tooltip=tooltip), height=720
+                pdk.Deck(map_style=st.context.theme.type, layers=layers, initial_view_state=view_state, tooltip=tooltip), height=720
             )
+
+            while not st.session_state.running:
+                sleep(.1)
+
+            # while not run:
+            #     sleep(0.5)
+
 
         def render_dynamic() -> None:
             for month_window in Itr(all_months).rolling(lookback_window).collect():
@@ -225,16 +239,16 @@ over time. To view the animation, in the sidebar:
 
         run_button = st.sidebar.empty()
 
-        title = st.empty()
-        map_placeholder = st.empty()
-        map_placeholder.pydeck_chart(pdk.Deck(layers=[boundary_layer], initial_view_state=view_state), height=720)
+        # map_placeholder.pydeck_chart(pdk.Deck(map_style=st.context.theme.type, layers=[boundary_layer], initial_view_state=view_state), height=720)
 
         graph = st.empty()
 
-        run = run_button.button("Run...")
+        def toggle_running() -> None:
+            st.session_state.running = not st.session_state.running
 
-        if run:
-            render_dynamic()
+        run = run_button.button("Run...", on_click=toggle_running)
+
+        render_dynamic()
         # else:
         #     render_static()
     except Exception as e:

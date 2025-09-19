@@ -97,9 +97,9 @@ over time. To view the animation, in the sidebar:
             help="Number of months of data to aggregate at each step",
         )
 
-        elevation_scale = st.sidebar.slider(
-            "Elevation scale", min_value=100, max_value=300, value=150, step=10, help="Adjust the vertical scale"
-        )
+        elevation_scale = 0 #st.sidebar.slider(
+        #     "Elevation scale", min_value=100, max_value=300, value=150, step=10, help="Adjust the vertical scale"
+        # )
 
         # map crimes to features
         centroid_lat, centroid_lon = raw_data.lat.mean(), raw_data.lon.mean()
@@ -123,7 +123,7 @@ over time. To view the animation, in the sidebar:
             latitude=centroid_lat,
             longitude=centroid_lon,
             zoom=9,
-            pitch=45,
+            pitch=30,
         )
 
         boundary_layer = pdk.Layer(
@@ -161,11 +161,17 @@ over time. To view the animation, in the sidebar:
                     filled=True,
                     extruded=True,
                     wireframe=True,
-                    get_fill_color=[0xC9, 0xF1, 0x00, 0xA0],  # [255, 0, 0, 160],
+                    # count is in the range 0-36, so this gives a yellow to red heatmap
+                    get_fill_color="""[
+                        255,
+                        255 - properties.count * 7,
+                        0,
+                        160
+                    ]""",  # Yellow to red heatmap based on count
                     get_line_color=[255, 255, 255, 255],
                     pickable=True,
                     elevation_scale=elevation_scale,
-                    get_elevation="properties.count",
+                    # get_elevation="properties.count",
                 ),
             ]
 
@@ -174,7 +180,7 @@ over time. To view the animation, in the sidebar:
             }
 
             map_placeholder.pydeck_chart(
-                pdk.Deck(layers=layers, initial_view_state=view_state, tooltip=tooltip), height=720
+                pdk.Deck(map_style=st.context.theme.type, layers=layers, initial_view_state=view_state, tooltip=tooltip), height=720
             )
 
         def render_dynamic() -> None:
@@ -209,7 +215,7 @@ over time. To view the animation, in the sidebar:
 
         title = st.empty()
         map_placeholder = st.empty()
-        map_placeholder.pydeck_chart(pdk.Deck(layers=[boundary_layer], initial_view_state=view_state), height=720)
+        map_placeholder.pydeck_chart(pdk.Deck(map_style=st.context.theme.type, layers=[boundary_layer], initial_view_state=view_state), height=720)
 
         graph = st.empty()
 
