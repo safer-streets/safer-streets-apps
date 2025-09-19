@@ -172,7 +172,10 @@ that area, with red being the highest.
             "Ethnicity breakdown (2021 census):<br/>" + "<br/>".join(f"{eth}: {{{eth}}}" for eth in ethnicities)
         }
 
-        st.pydeck_chart(pdk.Deck(map_style=st.context.theme.type, layers=layers, initial_view_state=view_state, tooltip=tooltip), height=960)
+        st.pydeck_chart(
+            pdk.Deck(map_style=st.context.theme.type, layers=layers, initial_view_state=view_state, tooltip=tooltip),
+            height=960,
+        )
 
         with st.expander("Table View"):
             st.dataframe(ethnicity.drop("geometry", axis=1))

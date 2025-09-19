@@ -65,9 +65,11 @@ not delete (yet)!**
 
 ## TODO
 
-- [ ] Multipage app - v2 of explorer (using area), another page measuring persistence of areas
+- [X] Multipage app - v2 of explorer (using area), another page measuring persistence of areas
+- [X] Demographics demo
 - [ ] Docker-compose implementation with full datasets on the cloud or in a volume...
 - [ ] ...then remove redundant demo branch
+- [ ] improve UX
 
 ## Referemces
 

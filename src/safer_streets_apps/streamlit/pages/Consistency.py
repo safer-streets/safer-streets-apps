@@ -77,10 +77,10 @@ the set of areas capture the most crime, with red being the highest.
 
         area_threshold = st.sidebar.slider(
             "Coverage (km²)",
-            10.0,
-            boundary.area.sum() / 1_000_000,
-            step=10.0,
-            value=100.0,
+            1.0,
+            100.0,
+            step=1.0,
+            value=10.0,
             help="Focus on the smallest land area that captures the most crime",
         )
 
@@ -93,7 +93,7 @@ the set of areas capture the most crime, with red being the highest.
             help="Number of months of data to aggregate at each step",
         )
 
-        elevation_scale = 0 #st.sidebar.slider(
+        elevation_scale = 0  # st.sidebar.slider(
         #     "Elevation scale", min_value=100, max_value=300, value=150, step=10, help="Adjust the vertical scale"
         # )
 
@@ -140,7 +140,7 @@ the set of areas capture the most crime, with red being the highest.
                 ### {period}:
                 {area:.1f}km² of land area contains {stats.iloc[-1]["Percent Captured"]:.1f}% of {category}
 
-                {stats.iloc[-1]["Features Included"]:.1f}% of {spatial_unit_name}
+                This corresponds to {stats.iloc[-1]["Features Included"]:.1f}% of {spatial_unit_name} units in {force} PFA.
 
                 **Gini Coefficient = {stats.iloc[-1]["Gini"] / 100:.2f}**
                 """)
@@ -176,7 +176,10 @@ the set of areas capture the most crime, with red being the highest.
             }
 
             map_placeholder.pydeck_chart(
-                pdk.Deck(map_style=st.context.theme.type, layers=layers, initial_view_state=view_state, tooltip=tooltip), height=720
+                pdk.Deck(
+                    map_style=st.context.theme.type, layers=layers, initial_view_state=view_state, tooltip=tooltip
+                ),
+                height=720,
             )
 
         def render_dynamic() -> None:
@@ -211,7 +214,10 @@ the set of areas capture the most crime, with red being the highest.
 
         title = st.empty()
         map_placeholder = st.empty()
-        map_placeholder.pydeck_chart(pdk.Deck(map_style=st.context.theme.type, layers=[boundary_layer], initial_view_state=view_state), height=720)
+        map_placeholder.pydeck_chart(
+            pdk.Deck(map_style=st.context.theme.type, layers=[boundary_layer], initial_view_state=view_state),
+            height=720,
+        )
 
         graph = st.empty()
 

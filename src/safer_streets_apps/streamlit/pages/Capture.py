@@ -84,10 +84,10 @@ over time. To view the animation, in the sidebar:
 
         area_threshold = st.sidebar.slider(
             "Coverage (km²)",
-            10.0,
-            boundary.area.sum() / 1_000_000,
-            step=10.0,
-            value=100.0,
+            1.0,
+            100.0,
+            step=1.0,
+            value=10.0,
             help="Focus on the smallest land area that captures the most crime",
         )
 
@@ -170,7 +170,7 @@ over time. To view the animation, in the sidebar:
             title.markdown(f"""
                 ### {period}: {captured_features.area_km2.sum():.1f}km² of land area contains {coverage:.1%} of {category}
 
-                {len(captured_features) / num_features:.1%} ({len(captured_features)}/{num_features}) of {spatial_unit_name}
+                **{len(captured_features) / num_features:.1%} ({len(captured_features)}/{num_features}) of {spatial_unit_name} units in {force} PFA**
 
                 **Gini Coefficient = {gini:.2f}**
 
@@ -221,15 +221,17 @@ over time. To view the animation, in the sidebar:
                 )
 
             map_placeholder.pydeck_chart(
-                pdk.Deck(map_style=st.context.theme.type, layers=layers, initial_view_state=view_state, tooltip=tooltip), height=720
+                pdk.Deck(
+                    map_style=st.context.theme.type, layers=layers, initial_view_state=view_state, tooltip=tooltip
+                ),
+                height=720,
             )
 
             while not st.session_state.running:
-                sleep(.1)
+                sleep(0.1)
 
             # while not run:
             #     sleep(0.5)
-
 
         def render_dynamic() -> None:
             for month_window in Itr(all_months).rolling(lookback_window).collect():
@@ -246,7 +248,7 @@ over time. To view the animation, in the sidebar:
         def toggle_running() -> None:
             st.session_state.running = not st.session_state.running
 
-        run = run_button.button("Run...", on_click=toggle_running)
+        run_button.button("Run...", on_click=toggle_running)
 
         render_dynamic()
         # else:
