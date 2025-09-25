@@ -6,7 +6,7 @@ import pandas as pd
 import pydeck as pdk
 import streamlit as st
 from itrx import Itr
-from safer_streets_core.spatial import get_force_boundary, map_to_spatial_unit
+from safer_streets_core.spatial import get_demographics, get_force_boundary, load_population_data, map_to_spatial_unit
 from safer_streets_core.utils import (
     CATEGORIES,
     Force,
@@ -26,6 +26,12 @@ def cache_crime_data(force: Force, category: str) -> tuple[gpd.GeoDataFrame, gpd
     force_boundary = get_force_boundary(force)
     data = load_crime_data(force, all_months, filters={"Crime type": category}, keep_lonlat=True)
     return data, force_boundary
+
+
+@st.cache_data
+def cache_demographic_data(force: Force) -> pd.DataFrame:
+    raw_population = load_population_data(force)
+    return raw_population
 
 
 st.set_page_config(layout="wide", page_title="Safer Streets", page_icon="👮")
@@ -76,11 +82,13 @@ over time. To view the animation, in the sidebar:
 
     spatial_unit_name = st.sidebar.selectbox("Spatial Unit", geographies.keys(), index=0)
 
-    if "running" not in st.session_state:
-        st.session_state.running = False
+    # if "running" not in st.session_state:
+    #     st.session_state.running = False
 
     try:
+        # TODO st.spinner...
         raw_data, boundary = cache_crime_data(force, category)
+        raw_population = cache_demographic_data(force)
 
         area_threshold = st.sidebar.slider(
             "Coverage (km²)",
@@ -113,6 +121,15 @@ over time. To view the animation, in the sidebar:
         centroid_lat, centroid_lon = raw_data.lat.mean(), raw_data.lon.mean()
         spatial_unit, spatial_unit_params = geographies[spatial_unit_name]
         crime_data, features = map_to_spatial_unit(raw_data, boundary, spatial_unit, **spatial_unit_params)
+        # aggregate population to units then compute proportions
+        demographic_data = (
+            get_demographics(raw_population, features)
+            .groupby(level=[0, 1])
+            .sum()["count"]
+            .unstack(level=1)
+            .reindex(features.index, fill_value=0)
+        )
+        # demographics = demographics.div(demographics.sum(axis=1), axis=0)
         # compute area in sensible units before changing crs!
         features["area_km2"] = features.area / 1_000_000
         # now convert everything to Webmercator
@@ -124,6 +141,8 @@ over time. To view the animation, in the sidebar:
         num_features = len(features)
         area_threshold = features.area_km2.sum() - area_threshold
         stats = pd.DataFrame(columns=["Gini", "Percent Captured"])
+
+        ethnicity = pd.DataFrame(columns=demographic_data.columns)
 
         st.toast("Data loaded")
 
@@ -150,7 +169,10 @@ over time. To view the animation, in the sidebar:
         title = st.empty()
         map_placeholder = st.empty()
 
-        @st.fragment
+        demographics_graph = st.empty()
+        gini_graph = st.empty()
+
+        # @st.fragment
         def render(period: str, counts: pd.Series) -> None:
             weighted_counts = pd.concat([counts.rename("n_crimes"), features.area_km2], axis=1)
             weighted_counts["density"] = weighted_counts.n_crimes / weighted_counts.area_km2
@@ -167,6 +189,12 @@ over time. To view the animation, in the sidebar:
 
             coverage = captured_features.n_crimes.sum() / counts.sum()
 
+            captured_demographics = demographic_data.loc[captured_features.index].sum().T
+            ethnicity.loc[period] = 100 * captured_demographics / captured_demographics.sum()
+
+            # demographics_graph.bar_chart(ethnicity, stack=True)
+            demographics_graph.area_chart(ethnicity, stack=True)
+
             title.markdown(f"""
                 ### {period}: {captured_features.area_km2.sum():.1f}km² of land area contains {coverage:.1%} of {category}
 
@@ -177,7 +205,7 @@ over time. To view the animation, in the sidebar:
                 """)
             stats.loc[period, "Percent Captured"] = coverage * 100
             stats.loc[period, "Gini"] = gini * 100
-            graph.line_chart(stats, x_label="Month")
+            gini_graph.line_chart(stats, x_label="Month")
 
             layers = [
                 boundary_layer,
@@ -227,14 +255,14 @@ over time. To view the animation, in the sidebar:
                 height=720,
             )
 
-            while not st.session_state.running:
-                sleep(0.1)
+            # while not st.session_state.running:
+            #     sleep(0.1)
 
             # while not run:
             #     sleep(0.5)
 
         def render_dynamic() -> None:
-            for month_window in Itr(all_months).rolling(lookback_window).collect():
+            for month_window in Itr(all_months[1:]).rolling(lookback_window).collect():
                 period = f"{month_window[0]} to {month_window[-1]}" if len(month_window) > 1 else str(month_window[0])
                 render(period, counts[[str(m) for m in month_window]].mean(axis=1))
                 sleep(0.5)
@@ -243,16 +271,16 @@ over time. To view the animation, in the sidebar:
 
         # map_placeholder.pydeck_chart(pdk.Deck(map_style=st.context.theme.type, layers=[boundary_layer], initial_view_state=view_state), height=720)
 
-        graph = st.empty()
+        # def toggle_running() -> None:
+        #     st.session_state.running = not st.session_state.running
 
-        def toggle_running() -> None:
-            st.session_state.running = not st.session_state.running
+        running = run_button.button("Run...")  # , on_click=toggle_running)
 
-        run_button.button("Run...", on_click=toggle_running)
+        period = f"{all_months[0]} to {all_months[lookback_window]}" if lookback_window > 1 else str(all_months[0])
+        render(period, counts[[str(m) for m in all_months[:lookback_window]]].mean(axis=1))
 
-        render_dynamic()
-        # else:
-        #     render_static()
+        if running:
+            render_dynamic()
     except Exception as e:
         st.error(e)
 

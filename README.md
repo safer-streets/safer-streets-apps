@@ -16,7 +16,7 @@ From the activated venv, picking up the default data dir:
 streamlit run src/safer_streets_apps/streamlit/Main.py
 ```
 
-If you want to point it to another data dir (e.g. for testing docker)
+If you want to point it to another data dir (NB the docker image hard-codes this value)
 
 ```sh
 SAFER_STREETS_DATA_DIR=<insert-here> streamlit run src/safer_streets_apps/streamlit/Main.py
@@ -71,7 +71,7 @@ not delete (yet)!**
 - [ ] ...then remove redundant demo branch
 - [ ] improve UX
 
-## Referemces
+## References
 
 - [Multipage app tutorial](https://docs.streamlit.io/get-started/tutorials/create-a-multipage-app)
 
