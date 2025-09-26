@@ -82,8 +82,8 @@ over time. To view the animation, in the sidebar:
 
     spatial_unit_name = st.sidebar.selectbox("Spatial Unit", geographies.keys(), index=0)
 
-    # if "running" not in st.session_state:
-    #     st.session_state.running = False
+    if "running" not in st.session_state:
+        st.session_state.running = False
 
     try:
         # TODO st.spinner...
@@ -117,34 +117,32 @@ over time. To view the animation, in the sidebar:
             "Elevation scale", min_value=100, max_value=300, value=150, step=10, help="Adjust the vertical scale"
         )
 
-        # map crimes to features
-        centroid_lat, centroid_lon = raw_data.lat.mean(), raw_data.lon.mean()
-        spatial_unit, spatial_unit_params = geographies[spatial_unit_name]
-        crime_data, features = map_to_spatial_unit(raw_data, boundary, spatial_unit, **spatial_unit_params)
-        # aggregate population to units then compute proportions
-        demographic_data = (
-            get_demographics(raw_population, features)
-            .groupby(level=[0, 1])
-            .sum()["count"]
-            .unstack(level=1)
-            .reindex(features.index, fill_value=0)
-        )
-        # demographics = demographics.div(demographics.sum(axis=1), axis=0)
-        # compute area in sensible units before changing crs!
-        features["area_km2"] = features.area / 1_000_000
-        # now convert everything to Webmercator
-        crime_data = crime_data.to_crs(epsg=4326)
-        boundary = boundary.to_crs(epsg=4326)
-        features = features.to_crs(epsg=4326)
-        # and aggregate
-        counts = get_monthly_crime_counts(crime_data, features)
-        num_features = len(features)
-        area_threshold = features.area_km2.sum() - area_threshold
-        stats = pd.DataFrame(columns=["Gini", "Percent Captured"])
-
-        ethnicity = pd.DataFrame(columns=demographic_data.columns)
-
-        st.toast("Data loaded")
+        with st.spinner("Loading data..."):
+            # map crimes to features
+            centroid_lat, centroid_lon = raw_data.lat.mean(), raw_data.lon.mean()
+            spatial_unit, spatial_unit_params = geographies[spatial_unit_name]
+            crime_data, features = map_to_spatial_unit(raw_data, boundary, spatial_unit, **spatial_unit_params)
+            # aggregate population to units then compute proportions
+            demographic_data = (
+                get_demographics(raw_population, features)
+                .groupby(level=[0, 1])
+                .sum()["count"]
+                .unstack(level=1)
+                .reindex(features.index, fill_value=0)
+            )
+            # demographics = demographics.div(demographics.sum(axis=1), axis=0)
+            # compute area in sensible units before changing crs!
+            features["area_km2"] = features.area / 1_000_000
+            # now convert everything to Webmercator
+            crime_data = crime_data.to_crs(epsg=4326)
+            boundary = boundary.to_crs(epsg=4326)
+            features = features.to_crs(epsg=4326)
+            # and aggregate
+            counts = get_monthly_crime_counts(crime_data, features)
+            num_features = len(features)
+            area_threshold = features.area_km2.sum() - area_threshold
+            stats = pd.DataFrame(columns=["Gini", "Percent Captured"])
+            ethnicity = pd.DataFrame(columns=demographic_data.columns)
 
         tooltip = {"html": "{n_crimes} crimes"}
 
@@ -252,32 +250,29 @@ over time. To view the animation, in the sidebar:
                 pdk.Deck(
                     map_style=st.context.theme.type, layers=layers, initial_view_state=view_state, tooltip=tooltip
                 ),
-                height=720,
+                # height=720,
             )
-
-            # while not st.session_state.running:
-            #     sleep(0.1)
-
-            # while not run:
-            #     sleep(0.5)
 
         def render_dynamic() -> None:
             for month_window in Itr(all_months[1:]).rolling(lookback_window).collect():
+                if not st.session_state.running:
+                    return
                 period = f"{month_window[0]} to {month_window[-1]}" if len(month_window) > 1 else str(month_window[0])
                 render(period, counts[[str(m) for m in month_window]].mean(axis=1))
                 sleep(0.5)
 
-        run_button = st.sidebar.empty()
+        def toggle_running() -> None:
+            st.session_state.running = not st.session_state.running
 
-        # map_placeholder.pydeck_chart(pdk.Deck(map_style=st.context.theme.type, layers=[boundary_layer], initial_view_state=view_state), height=720)
+        cols = st.sidebar.columns(2)
 
-        # def toggle_running() -> None:
-        #     st.session_state.running = not st.session_state.running
+        running = cols[0].button(
+            "▶️ Play", help="Run animation over last 3 years", disabled=st.session_state.running, on_click=toggle_running
+        )
+        cols[1].button("⏸️ Stop", disabled=not st.session_state.running, on_click=toggle_running)
 
-        running = run_button.button("Run...")  # , on_click=toggle_running)
-
-        period = f"{all_months[0]} to {all_months[lookback_window]}" if lookback_window > 1 else str(all_months[0])
-        render(period, counts[[str(m) for m in all_months[:lookback_window]]].mean(axis=1))
+        period = f"{all_months[-lookback_window]} to {all_months[-1]}" if lookback_window > 1 else str(all_months[-1])
+        render(period, counts[[str(m) for m in all_months[-lookback_window:]]].mean(axis=1))
 
         if running:
             render_dynamic()

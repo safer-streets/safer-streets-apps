@@ -21,7 +21,7 @@ safer-streets-core = { path = "../safer-streets-core", editable = true }
 line-length = 120
 
 [tool.ruff.lint]
-select = ["B", "E", "F", "I", "SIM"]
+select = ["B", "C", "E", "F", "I", "SIM"]
 ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
