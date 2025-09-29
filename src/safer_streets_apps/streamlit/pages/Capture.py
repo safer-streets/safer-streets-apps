@@ -6,6 +6,7 @@ import pandas as pd
 import pydeck as pdk
 import streamlit as st
 from itrx import Itr
+from safer_streets_core.charts import make_radar_chart
 from safer_streets_core.spatial import get_demographics, get_force_boundary, load_population_data, map_to_spatial_unit
 from safer_streets_core.utils import (
     CATEGORIES,
@@ -144,6 +145,10 @@ over time. To view the animation, in the sidebar:
             stats = pd.DataFrame(columns=["Gini", "Percent Captured"])
             ethnicity = pd.DataFrame(columns=demographic_data.columns)
 
+        totals = raw_population.groupby("C2021_ETH_20_NAME").apply(len)
+        # ethnicity.loc["for PFA"] = 100 * totals / totals.sum()
+        totals = 100 * totals / totals.sum()
+
         tooltip = {"html": "{n_crimes} crimes"}
 
         view_state = pdk.ViewState(
@@ -167,7 +172,9 @@ over time. To view the animation, in the sidebar:
         title = st.empty()
         map_placeholder = st.empty()
 
-        demographics_graph = st.empty()
+        cols = st.columns(2)
+        demographics_graph = cols[0].empty()
+        demographics_radar = cols[1].empty()
         gini_graph = st.empty()
 
         # @st.fragment
@@ -191,7 +198,11 @@ over time. To view the animation, in the sidebar:
             ethnicity.loc[period] = 100 * captured_demographics / captured_demographics.sum()
 
             # demographics_graph.bar_chart(ethnicity, stack=True)
-            demographics_graph.area_chart(ethnicity, stack=True)
+            demographics_graph.area_chart(ethnicity, stack=True, height=640)
+
+            radar_data = ethnicity - totals
+            radar_data.columns = radar_data.columns.map(lambda col: col.split(" ")[0].replace(",", ""))
+            demographics_radar.pyplot(make_radar_chart(radar_data, r_ticks=[0], title="Hotspot ethnicity deviation from PFA average"))
 
             title.markdown(f"""
                 ### {period}: {captured_features.area_km2.sum():.1f}km² of land area contains {coverage:.1%} of {category}
@@ -260,6 +271,8 @@ over time. To view the animation, in the sidebar:
                 period = f"{month_window[0]} to {month_window[-1]}" if len(month_window) > 1 else str(month_window[0])
                 render(period, counts[[str(m) for m in month_window]].mean(axis=1))
                 sleep(0.5)
+            st.session_state.running = False
+            ethnicity.to_csv("eth.csv")
 
         def toggle_running() -> None:
             st.session_state.running = not st.session_state.running
@@ -276,6 +289,7 @@ over time. To view the animation, in the sidebar:
 
         if running:
             render_dynamic()
+
     except Exception as e:
         st.error(e)
 
