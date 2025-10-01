@@ -6,6 +6,7 @@ import pandas as pd
 import pydeck as pdk
 import streamlit as st
 from itrx import Itr
+from matplotlib import pyplot as plt
 from safer_streets_core.charts import make_radar_chart
 from safer_streets_core.spatial import get_demographics, get_force_boundary, load_population_data, map_to_spatial_unit
 from safer_streets_core.utils import (
@@ -202,7 +203,16 @@ over time. To view the animation, in the sidebar:
 
             radar_data = ethnicity - totals
             radar_data.columns = radar_data.columns.map(lambda col: col.split(" ")[0].replace(",", ""))
-            demographics_radar.pyplot(make_radar_chart(radar_data, r_ticks=[0], title="Hotspot ethnicity deviation from PFA average"))
+            fig = plt.figure()
+            demographics_radar.pyplot(
+                make_radar_chart(
+                    fig,
+                    111,
+                    radar_data,
+                    r_ticks=[-100, 0, 100],
+                    title="Hotspot ethnicity: % deviation from PFA average",
+                )
+            )
 
             title.markdown(f"""
                 ### {period}: {captured_features.area_km2.sum():.1f}km² of land area contains {coverage:.1%} of {category}

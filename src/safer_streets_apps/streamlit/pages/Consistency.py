@@ -172,7 +172,7 @@ the set of areas capture the most crime, with red being the highest.
             ]
 
             tooltip = {
-                "html": "Feature {name} appears {count} times in 36 months<br/>",
+                "html": f"Feature {{name}} appears {{count}} times out of {37 - lookback_window}<br/>",
             }
 
             map_placeholder.pydeck_chart(
