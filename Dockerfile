@@ -37,4 +37,4 @@ ENTRYPOINT []
 ENV SAFER_STREETS_DATA_DIR=/app/data-local
 
 # Uses `--server.address 0.0.0.0` to allow access from outside the container
-CMD ["streamlit", "run", "src/safer_streets_apps/streamlit/Main.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "src/safer_streets_apps/streamlit/Main.py", "--server.port=8000", "--server.address=0.0.0.0"]
