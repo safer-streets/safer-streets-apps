@@ -1,49 +1,26 @@
-from typing import Any, cast, get_args
+from typing import cast, get_args
 
 import geopandas as gpd
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
-
-# from safer_streets_core.charts import make_radar_chart
-from safer_streets_core.spatial import SpatialUnit, get_demographics, map_to_spatial_unit
 from safer_streets_core.utils import (
     CATEGORIES,
     Force,
     Month,
-    get_monthly_crime_counts,
 )
 
-from safer_streets_apps.streamlit.common import all_months, cache_crime_data, cache_demographic_data, geographies
+from safer_streets_apps.streamlit.common import (
+    all_months,
+    cache_crime_data,
+    cache_demographic_data,
+    geographies,
+    get_counts_and_features,
+    get_ethnicity,
+)
 
 
 # TODO move to common if reusable
-def get_counts_and_features(
-    raw_data: gpd.GeoDataFrame, boundary: gpd.GeoDataFrame, spatial_unit: SpatialUnit, **spatial_unit_params: Any
-):
-    crime_data, features = map_to_spatial_unit(raw_data, boundary, spatial_unit, **spatial_unit_params)
-    # compute area in sensible units before changing crs!
-    features["area_km2"] = features.area / 1_000_000
-    # now convert everything to Webmercator
-    crime_data = crime_data.to_crs(epsg=4326)
-    boundary = boundary.to_crs(epsg=4326)
-    features = features.to_crs(epsg=4326)
-    # and aggregate
-    counts = get_monthly_crime_counts(crime_data, features)
-    return counts, features, boundary
-
-
-def get_ethnicity(raw_population: gpd.GeoDataFrame, features: gpd.GeoDataFrame) -> pd.DataFrame:
-    ethnicity = (
-        get_demographics(raw_population, features)
-        .groupby(["spatial_unit", "C2021_ETH_20_NAME"], observed=True)["count"]
-        .sum()
-        .unstack(level="C2021_ETH_20_NAME")
-    ).reindex(features.index, fill_value=0)
-    ethnicity.columns = ethnicity.columns.astype(str).str[:5]
-    return ethnicity
-
-
 def get_windowed_ordered_counts(
     counts: pd.DataFrame, month: Month, lookback_window: int, features: gpd.GeoDataFrame
 ) -> pd.DataFrame:
@@ -87,7 +64,6 @@ its crime and demographics (Hover on the force area boundary for average values.
 
     category = st.sidebar.selectbox("Crime type", CATEGORIES, index=1)
 
-    # TODO make LSOA the default
     spatial_unit_name = st.sidebar.selectbox("Spatial Unit", geographies.keys(), index=1)
 
     try:
@@ -103,7 +79,7 @@ its crime and demographics (Hover on the force area boundary for average values.
             )
             total_area = features.area_km2.sum()
 
-        area_threshold = total_area - st.sidebar.slider(
+        area_threshold = st.sidebar.slider(
             "Coverage (km²)",
             1.0,
             100.0,
@@ -113,7 +89,7 @@ its crime and demographics (Hover on the force area boundary for average values.
         )
 
         lookback_window = st.sidebar.slider(
-            "Lookback window",
+            "Lookback window (months)",
             min_value=1,
             max_value=12,
             value=1,
@@ -149,7 +125,9 @@ its crime and demographics (Hover on the force area boundary for average values.
             # make boundary work with the tooltip
             # TODO this could be cached
             boundary = boundary.rename(columns={"PFA23NM": "name"})
+            boundary["n_crimes"] = ordered_counts.n_crimes.sum()
             boundary["population"] = ethnicity.sum().sum()
+            # this makes the toolips nice but prevents numerical sorting
             for eth in ethnicity.columns:
                 boundary[eth] = f"{ethnicity_average[eth]:.1%}"
             boundary["n_crimes"] = ordered_counts.n_crimes.sum()
@@ -162,7 +140,7 @@ its crime and demographics (Hover on the force area boundary for average values.
 
             # deal with case where we've captured all incidents in a smaller area than specified
             captured_features = features[["geometry"]].join(
-                ordered_counts[(ordered_counts.cum_area >= area_threshold) & (ordered_counts.n_crimes > 0)],
+                ordered_counts[(ordered_counts.cum_area >= total_area - area_threshold) & (ordered_counts.n_crimes > 0)],
                 how="right",
             )
             captured_features = captured_features.join(tooltip_info)
@@ -170,7 +148,7 @@ its crime and demographics (Hover on the force area boundary for average values.
 
             if show_missed:
                 missed_features = features[["geometry"]].join(
-                    ordered_counts[(ordered_counts.cum_area < area_threshold) & (ordered_counts.n_crimes > 0)],
+                    ordered_counts[(ordered_counts.cum_area < total_area - area_threshold) & (ordered_counts.n_crimes > 0)],
                     how="right",
                 )
                 missed_features = missed_features.join(tooltip_info)
@@ -228,7 +206,9 @@ its crime and demographics (Hover on the force area boundary for average values.
                 ),
             )
 
-        st.markdown(f"## {category} in {force} PFA, {display_name(month)}")
+        st.markdown(f"## {category} in {force} PFA, {display_name(month)}\n"
+                    f"### Features in the top {area_threshold}km², {lookback_window} month rolling window"
+)
 
         tooltip = {
             "html": "Feature {name} population: {population}, crimes: {n_crimes}<br/>"
@@ -241,7 +221,7 @@ its crime and demographics (Hover on the force area boundary for average values.
         )
 
         with st.expander("Hotspot Table"):
-            st.dataframe(boundary.drop(columns="geometry"))
+            st.dataframe(boundary.drop(columns="geometry"))  # .style.format("{:.1%}", subset=ethnicity.columns))
             st.dataframe(
                 captured_features.drop(columns=["geometry", "cum_area", "name", "opacity"]).sort_values(
                     by="n_crimes", ascending=False

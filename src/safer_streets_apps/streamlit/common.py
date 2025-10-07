@@ -1,8 +1,17 @@
+from typing import Any
+
 import geopandas as gpd
+import pandas as pd
 import streamlit as st
 from itrx import Itr
-from safer_streets_core.spatial import get_force_boundary, load_population_data
-from safer_streets_core.utils import Force, latest_month, load_crime_data, monthgen
+from safer_streets_core.spatial import (
+    SpatialUnit,
+    get_demographics,
+    get_force_boundary,
+    load_population_data,
+    map_to_spatial_unit,
+)
+from safer_streets_core.utils import Force, get_monthly_crime_counts, latest_month, load_crime_data, monthgen
 
 LATEST_DATE = latest_month()
 all_months = Itr(monthgen(LATEST_DATE, backwards=True)).take(36).rev().collect()
@@ -32,3 +41,29 @@ geographies = {
     "250m hexes": ("HEX", {"size": 250.0}),
     "125m hexes": ("HEX", {"size": 125.0}),
 }
+
+
+def get_counts_and_features(
+    raw_data: gpd.GeoDataFrame, boundary: gpd.GeoDataFrame, spatial_unit: SpatialUnit, **spatial_unit_params: Any
+):
+    crime_data, features = map_to_spatial_unit(raw_data, boundary, spatial_unit, **spatial_unit_params)
+    # compute area in sensible units before changing crs!
+    features["area_km2"] = features.area / 1_000_000
+    # now convert everything to Webmercator
+    crime_data = crime_data.to_crs(epsg=4326)
+    boundary = boundary.to_crs(epsg=4326)
+    features = features.to_crs(epsg=4326)
+    # and aggregate
+    counts = get_monthly_crime_counts(crime_data, features)
+    return counts, features, boundary
+
+
+def get_ethnicity(raw_population: gpd.GeoDataFrame, features: gpd.GeoDataFrame) -> pd.DataFrame:
+    ethnicity = (
+        get_demographics(raw_population, features)
+        .groupby(["spatial_unit", "C2021_ETH_20_NAME"], observed=True)["count"]
+        .sum()
+        .unstack(level="C2021_ETH_20_NAME")
+    ).reindex(features.index, fill_value=0)
+    ethnicity.columns = ethnicity.columns.astype(str).str[:5]
+    return ethnicity

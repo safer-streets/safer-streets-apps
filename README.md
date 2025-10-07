@@ -44,10 +44,11 @@ docker build -t ghcr.io/safer-streets/safer-streets-apps .
 
 ### Run
 
-This command runs the app using data stored within it:
+This command runs the app in the container, mounting your local data directory:
 
 ```sh
-docker run -p8000:8000 -e SAFER_STREETS_DATA_DIR=./data-local ghcr.io/safer-streets/safer-streets-apps
+docker run -p8000:8000 --mount type=bind,source=../data,target=/mnt/data -e SAFER_STREETS_DATA_DIR=/mnt/data \
+  ghcr.io/safer-streets/safer-streets-apps
 ```
 
 (On Azure, mount storage (Settings → Configuration → Path Mappings) and set the environment variable appropriately)

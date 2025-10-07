@@ -1,79 +1,77 @@
-from time import sleep
-from typing import get_args
+from typing import cast, get_args
 
 import geopandas as gpd
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
-from itrx import Itr
-from safer_streets_core.spatial import get_force_boundary, map_to_spatial_unit
 from safer_streets_core.utils import (
     CATEGORIES,
     Force,
-    calc_gini,
-    get_monthly_crime_counts,
-    latest_month,
-    load_crime_data,
-    monthgen,
+    Month,
 )
 
-# streamlit seems to break load_dotenv
-LATEST_DATE = latest_month()
-all_months = Itr(monthgen(LATEST_DATE, backwards=True)).take(36).rev().collect()
+from safer_streets_apps.streamlit.common import (
+    cache_crime_data,
+    cache_demographic_data,
+    geographies,
+    get_counts_and_features,
+    get_ethnicity,
+)
 
 
-@st.cache_data
-def cache_crime_data(force: Force, category: str) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
-    force_boundary = get_force_boundary(force)
-    data = load_crime_data(force, all_months, filters={"Crime type": category}, keep_lonlat=True)
-    return data, force_boundary
+def get_windowed_ordered_counts(
+    counts: pd.DataFrame, month: Month, lookback_window: int, features: gpd.GeoDataFrame
+) -> pd.DataFrame:
+    windowed_counts = counts[[str(month - i) for i in range(lookback_window)]]
+    windowed_counts = windowed_counts.sum(axis=1).rename("n_crimes")
+    ordered_counts = pd.concat([windowed_counts, features.area_km2], axis=1)
+    ordered_counts["density"] = ordered_counts.n_crimes / ordered_counts.area_km2
+    ordered_counts = ordered_counts.sort_values(by="density")
+    ordered_counts["cum_area"] = ordered_counts.area_km2.cumsum()
+    return ordered_counts
 
 
-st.set_page_config(layout="wide", page_title="Safer Streets", page_icon="👮")
-
-geographies = {
-    "Middle layer Super Output Areas (census)": ("MSOA21", {}),
-    "Lower layer Super Output Areas (census)": ("LSOA21", {}),
-    "Output Areas (census)": ("OA21", {}),
-    "800m grid": ("GRID", {"size": 800.0}),
-    "400m grid": ("GRID", {"size": 400.0}),
-    "200m grid": ("GRID", {"size": 200.0}),
-    "500m hexes": ("HEX", {"size": 500.0}),
-    "250m hexes": ("HEX", {"size": 250.0}),
-    "125m hexes": ("HEX", {"size": 125.0}),
-}
-
-st.set_page_config(page_title="Crime Consistency", page_icon="🌍")
-
+st.set_page_config(layout="wide", page_title="Crime Capture", page_icon="👮")
 st.logo("./assets/safer-streets-small.png", size="large")
 
 
 def main() -> None:
     st.title("Crime Consistency Explorer")
 
-    with st.expander("Help"):
+    st.markdown("## Highlighting persistent crime hotspots")
+
+    with st.expander("More info..."):
         st.markdown("""
 The app uses police.uk public crime data to determine, how consistently areas feature in the top areas for crimes of a
 given type, over the last 3 years.
 
-The interactive map displays the "hot" areas shaded from yellow to red. The each area is coloured given by the number of months it features in
-the set of areas capture the most crime, with red being the highest.
+The interactive map displays the "hot" areas shaded in yellow according to the the number of times they feature in
+the hotspots - that is, the set of areas that capture the most crime for the total coverage specified.
 
 1. Select the Force Area, Crime Type and Spatial Unit.
-2. Adjust the the land area you want to cover, and the number of months to look back.
-3. Hit "Run..."
+2. Adjust the the land area you want to cover, the number of months to look back (average) over, and the time period you want to observe.
 """)
 
     st.sidebar.header("Consistency")
 
-    force = st.sidebar.selectbox("Force Area", get_args(Force), index=43)  # default="West Yorkshire"
+    force = cast(Force, st.sidebar.selectbox("Force Area", get_args(Force), index=43))  # default="West Yorkshire"
 
     category = st.sidebar.selectbox("Crime type", CATEGORIES, index=1)
 
-    spatial_unit_name = st.sidebar.selectbox("Spatial Unit", geographies.keys(), index=0)
+    spatial_unit_name = st.sidebar.selectbox("Spatial Unit", geographies.keys(), index=1)
 
     try:
-        raw_data, boundary = cache_crime_data(force, category)
+        with st.spinner("Loading crime and demographic data..."):
+            raw_data, boundary = cache_crime_data(force, category)
+            raw_population = cache_demographic_data(force)
+
+            # map crimes to features
+            centroid_lat, centroid_lon = raw_data.lat.mean(), raw_data.lon.mean()
+            spatial_unit, spatial_unit_params = geographies[spatial_unit_name]
+            counts, features, boundary = get_counts_and_features(
+                raw_data, boundary, spatial_unit, **spatial_unit_params
+            )
+            total_area = features.area_km2.sum()
 
         area_threshold = st.sidebar.slider(
             "Coverage (km²)",
@@ -85,7 +83,7 @@ the set of areas capture the most crime, with red being the highest.
         )
 
         lookback_window = st.sidebar.slider(
-            "Lookback window",
+            "Lookback window (months)",
             min_value=1,
             max_value=12,
             value=1,
@@ -93,28 +91,67 @@ the set of areas capture the most crime, with red being the highest.
             help="Number of months of data to aggregate at each step",
         )
 
-        elevation_scale = 0  # st.sidebar.slider(
-        #     "Elevation scale", min_value=100, max_value=300, value=150, step=10, help="Adjust the vertical scale"
-        # )
+        observation_period = st.sidebar.slider(
+            "Observation Period (years)",
+            min_value=1,
+            max_value=3,
+            value=3,
+            step=1,
+            help="Number of years of data to examine",
+        )
 
-        # map crimes to features
-        centroid_lat, centroid_lon = raw_data.lat.mean(), raw_data.lon.mean()
-        spatial_unit, spatial_unit_params = geographies[spatial_unit_name]
-        crime_data, features = map_to_spatial_unit(raw_data, boundary, spatial_unit, **spatial_unit_params)
-        # compute area in sensible units before changing crs!
-        features["area_km2"] = features.area / 1_000_000
-        # now convert everything to Webmercator
-        crime_data = crime_data.to_crs(epsg=4326)
-        boundary = boundary.to_crs(epsg=4326)
-        features = features.to_crs(epsg=4326)
-        # and aggregate
-        counts = get_monthly_crime_counts(crime_data, features)
-        num_features = len(features)
-        area_threshold = features.area_km2.sum() - area_threshold
-        stats = pd.DataFrame(columns=["Gini", "Percent Captured"])
+        counts = counts.iloc[:, -observation_period * 12 :]
 
-        st.toast("Data loaded")
+        # process data
+        with st.spinner("Processing crime and demographic data..."):
+            ethnicity = get_ethnicity(raw_population, features)
+            ethnicity_average = ethnicity.sum() / ethnicity.sum().sum()
 
+            # make boundary work with the tooltip
+            # TODO this could be cached
+            boundary = boundary.rename(columns={"PFA23NM": "name"})
+            # boundary["n_crimes"] = counts.sum().sum()
+            boundary["population"] = ethnicity.sum().sum()
+            boundary["crime_rate"] = 12 * counts.sum().mean()
+            # this makes the toolips nice but prevents numerical sorting
+            for eth in ethnicity.columns:
+                boundary[eth] = f"{ethnicity_average[eth]:.1%}"
+
+            hit_count = features[["geometry"]].copy()
+            hit_count["name"] = hit_count.index
+            hit_count["population"] = ethnicity.sum(axis=1)
+            hit_count = hit_count.join(features.area_km2)
+            hit_count["count"] = 0
+            hit_count["crime_rate"] = 0
+
+            # maximum number of times area can feature
+            max_hits = 12 * observation_period + 1 - lookback_window
+
+            for c in counts.T.rolling(lookback_window):
+                if len(c) < lookback_window:
+                    continue
+
+                mean_count = c.mean().rename("mean")
+                hit_count["crime_rate"] += mean_count
+
+                mean_count_by_density = pd.concat(
+                    [mean_count, features.area_km2, (mean_count / features.area_km2).rename("density")], axis=1
+                ).sort_values(by="density")
+
+                hit = (mean_count_by_density.area_km2.cumsum() > total_area - area_threshold) & (
+                    mean_count_by_density["mean"] > 0
+                )
+                hit_count["count"] += hit
+
+            # annualised crime rate
+            hit_count.crime_rate *= 12 / max_hits
+            hit_count = hit_count[hit_count["count"] > 0]
+            hit_count["opacity"] = 128 * hit_count["count"] / max_hits
+
+            for colname, values in ethnicity.div(ethnicity.sum(axis=1), axis=0).fillna(0).items():
+                hit_count[colname] = values.apply(lambda x: f"{x:.1%}")
+
+        # render map
         view_state = pdk.ViewState(
             latitude=centroid_lat,
             longitude=centroid_lon,
@@ -129,102 +166,50 @@ the set of areas capture the most crime, with red being the highest.
             stroked=True,
             filled=False,
             extruded=False,
+            pickable=True,
             line_width_min_pixels=3,
-            get_line_color=[64, 64, 192, 255],
+            get_line_color=[192, 64, 64, 255],
         )
 
-        def render(month: str, area: float, rankings: gpd.GeoDataFrame) -> None:
-            period = f"{counts.columns[0]} to {month} ({lookback_window} month average)"
+        hotspots = (
+            pdk.Layer(
+                "GeoJsonLayer",
+                hit_count.__geo_interface__,
+                stroked=True,
+                filled=True,
+                wireframe=True,
+                get_fill_color="[201, 241, 0, properties.opacity]",  # [255, 0, 0, 160],
+                get_line_color=[0xC9, 0xF1, 0x00, 0xA0],
+                line_width_min_pixels=3,
+                pickable=True,
+            ),
+        )
 
-            title.markdown(f"""
-                ### {period}:
-                {area:.1f}km² of land area contains {stats.iloc[-1]["Percent Captured"]:.1f}% of {category}
+        layers = [boundary_layer, hotspots]
 
-                This corresponds to {stats.iloc[-1]["Features Included"]:.1f}% of {spatial_unit_name} units in {force} PFA.
+        st.markdown(
+            f"## {category} in {force} PFA, {counts.columns[0]} to {counts.columns[-1]}\n"
+            f"### Features in the top {area_threshold}km², {lookback_window} month rolling window"
+        )
 
-                **Gini Coefficient = {stats.iloc[-1]["Gini"] / 100:.2f}**
-                """)
+        tooltip = {
+            "html": f"Feature {{name}} population: {{population}}, annual crime rate {{crime_rate}}\nHotspot {{count}} times out of {max_hits} <br/>"
+            "Ethnicity breakdown (2021 census):<br/>" + "<br/>".join(f"{eth}: {{{eth}}}" for eth in ethnicity.columns)
+        }
 
-            graph.line_chart(stats, x_label="Month")
+        st.pydeck_chart(
+            pdk.Deck(map_style=st.context.theme.type, layers=layers, initial_view_state=view_state, tooltip=tooltip),
+            height=960,
+        )
 
-            layers = [
-                boundary_layer,
-                pdk.Layer(
-                    "GeoJsonLayer",
-                    rankings.__geo_interface__,
-                    opacity=1.0,
-                    stroked=True,
-                    filled=True,
-                    extruded=True,
-                    wireframe=True,
-                    # count is in the range 0-36, so this gives a yellow to red heatmap
-                    get_fill_color="""[
-                        255,
-                        255 - properties.count * 7,
-                        0,
-                        160
-                    ]""",  # Yellow to red heatmap based on count
-                    get_line_color=[255, 255, 255, 255],
-                    pickable=True,
-                    elevation_scale=elevation_scale,
-                    # get_elevation="properties.count",
-                ),
-            ]
-
-            tooltip = {
-                "html": f"Feature {{name}} appears {{count}} times out of {37 - lookback_window}<br/>",
-            }
-
-            map_placeholder.pydeck_chart(
-                pdk.Deck(
-                    map_style=st.context.theme.type, layers=layers, initial_view_state=view_state, tooltip=tooltip
-                ),
-                height=720,
+        with st.expander("Hotspot Table"):
+            st.dataframe(boundary.drop(columns="geometry"))  # .style.format("{:.1%}", subset=ethnicity.columns))
+            st.dataframe(
+                hit_count.drop(columns=["geometry", "name", "opacity"]).sort_values(
+                    by=["count", "crime_rate"], ascending=False
+                )
             )
 
-        def render_dynamic() -> None:
-            running_total = features[["geometry"]].copy()
-            running_total["count"] = 0
-            running_total["name"] = running_total.index
-
-            for c in counts.T.rolling(lookback_window):
-                if len(c) < lookback_window:
-                    continue
-
-                period = f"{c.index[0]} to {c.index[-1]}" if lookback_window > 1 else c.index[0]
-                mean_count = c.mean().rename("mean")
-
-                mean_count_by_density = pd.concat(
-                    [mean_count, features.area_km2, (mean_count / features.area_km2).rename("density")], axis=1
-                ).sort_values(by="density")
-
-                hit = (mean_count_by_density.area_km2.cumsum() > area_threshold) & (mean_count_by_density["mean"] > 0)
-                running_total["count"] += hit
-
-                stats.loc[period, "Percent Captured"] = (mean_count * hit).sum() / mean_count.sum() * 100
-                stats.loc[period, "Features Included"] = hit.sum() / num_features * 100
-                stats.loc[period, "Gini"] = calc_gini(mean_count)[0] * 100
-
-                render(
-                    c.index[-1], (mean_count_by_density.area_km2 * hit).sum(), running_total[running_total["count"] > 0]
-                )
-                sleep(0.1)
-
-        run_button = st.sidebar.empty()
-
-        title = st.empty()
-        map_placeholder = st.empty()
-        map_placeholder.pydeck_chart(
-            pdk.Deck(map_style=st.context.theme.type, layers=[boundary_layer], initial_view_state=view_state),
-            height=720,
-        )
-
-        graph = st.empty()
-
-        run = run_button.button("Run...")
-
-        if run:
-            render_dynamic()
     except Exception as e:
         st.error(e)
 
