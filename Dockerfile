@@ -31,6 +31,9 @@ COPY . /app
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
 
+# FIXME need this because safer-streets-apps isn't installed as a package
+ENV PYTHONPATH=src
+
 # Reset the entrypoint, don't invoke `uv`
 ENTRYPOINT []
 
