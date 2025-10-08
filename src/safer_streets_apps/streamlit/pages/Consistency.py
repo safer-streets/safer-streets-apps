@@ -146,7 +146,7 @@ the hotspots - that is, the set of areas that capture the most crime for the tot
             # annualised crime rate
             hit_count.crime_rate *= 12 / max_hits
             hit_count = hit_count[hit_count["count"] > 0]
-            hit_count["opacity"] = 128 * hit_count["count"] / max_hits
+            hit_count["opacity"] = 192 * hit_count["count"] / max_hits
 
             for colname, values in ethnicity.div(ethnicity.sum(axis=1), axis=0).fillna(0).items():
                 hit_count[colname] = values.apply(lambda x: f"{x:.1%}")
@@ -189,7 +189,7 @@ the hotspots - that is, the set of areas that capture the most crime for the tot
 
         st.markdown(
             f"## {category} in {force} PFA, {counts.columns[0]} to {counts.columns[-1]}\n"
-            f"### Features in the top {area_threshold}km², {lookback_window} month rolling window"
+            f"### Features in the top {area_threshold}km² - {lookback_window} month rolling window"
         )
 
         tooltip = {

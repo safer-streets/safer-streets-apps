@@ -1,1 +1,6 @@
 .venv
+.env
+.git
+.mypy_cache
+.ruff_cache
+.vscode

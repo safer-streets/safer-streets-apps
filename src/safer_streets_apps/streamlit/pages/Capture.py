@@ -140,19 +140,23 @@ its crime and demographics (Hover on the force area boundary for average values.
 
             # deal with case where we've captured all incidents in a smaller area than specified
             captured_features = features[["geometry"]].join(
-                ordered_counts[(ordered_counts.cum_area >= total_area - area_threshold) & (ordered_counts.n_crimes > 0)],
+                ordered_counts[
+                    (ordered_counts.cum_area >= total_area - area_threshold) & (ordered_counts.n_crimes > 0)
+                ],
                 how="right",
             )
             captured_features = captured_features.join(tooltip_info)
-            captured_features["opacity"] = 128 * captured_features.n_crimes / captured_features.n_crimes.max()
+            captured_features["opacity"] = 192 * captured_features.n_crimes / captured_features.n_crimes.max()
 
             if show_missed:
                 missed_features = features[["geometry"]].join(
-                    ordered_counts[(ordered_counts.cum_area < total_area - area_threshold) & (ordered_counts.n_crimes > 0)],
+                    ordered_counts[
+                        (ordered_counts.cum_area < total_area - area_threshold) & (ordered_counts.n_crimes > 0)
+                    ],
                     how="right",
                 )
                 missed_features = missed_features.join(tooltip_info)
-                missed_features["opacity"] = 128 * missed_features.n_crimes / missed_features.n_crimes.max()
+                missed_features["opacity"] = 96 * missed_features.n_crimes / missed_features.n_crimes.max()
 
         # render map
         view_state = pdk.ViewState(
@@ -206,9 +210,10 @@ its crime and demographics (Hover on the force area boundary for average values.
                 ),
             )
 
-        st.markdown(f"## {category} in {force} PFA, {display_name(month)}\n"
-                    f"### Features in the top {area_threshold}km², {lookback_window} month rolling window"
-)
+        st.markdown(
+            f"## {category} in {force} PFA, {display_name(month)}\n"
+            f"### Features in the top {area_threshold}km² - {lookback_window} month rolling window"
+        )
 
         tooltip = {
             "html": "Feature {name} population: {population}, crimes: {n_crimes}<br/>"
