@@ -5,7 +5,13 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 from safer_streets_core.charts import make_radar_chart
-from safer_streets_core.measures import calc_gini, cosine_similarity, lorenz_curve
+from safer_streets_core.measures import (
+    calc_gini,
+    cosine_similarity,
+    lorenz_curve,
+    rank_biased_overlap,
+    spearman_rank_correlation,
+)
 from safer_streets_core.utils import CATEGORIES, Force, Month
 from sklearn.metrics import f1_score
 
@@ -36,20 +42,29 @@ st.logo("./assets/safer-streets-small.png", size="large")
 
 
 def main() -> None:
-    st.title("Crime Consistency Explorer (More)")
+    st.title("Crime Measures")
 
-    st.markdown("## Highlighting persistent crime hotspots")
+    st.markdown(
+        "## Highlighting metrics for describing crime concentration, hotspot consistency, and impacted demographics"
+    )
 
     with st.expander("More info..."):
         st.markdown("""
 The app uses police.uk public crime data to determine, how consistently areas feature in the top areas for crimes of a
 given type, over the last 3 years.
 
+Graphs produced:
+- concentration measures: Lorenz curves, Gini, proportion of crime captured in the specified land area, relative
+density of crime in the captured area.
+- consistency measures between adjacent time periods: cosine similarity, F1 score (areas classified by hotspot),
+rank-biased overlap, Spearman rank correlation
+- demographics: ethnicity proportions in the captures areas versus the PFA average
+
 1. Select the Force Area, Crime Type and Spatial Unit.
-2. Adjust the the land area you want to cover, the number of months to look back (average) over, and the time period you want to observe.
+2. Adjust the the land area you want to cover, the number of months to look back (average) over
 """)
 
-    st.sidebar.header("Consistency")
+    st.sidebar.header("Measures")
 
     force = cast(Force, st.sidebar.selectbox("Force Area", get_args(Force), index=43))  # default="West Yorkshire"
 
@@ -126,15 +141,14 @@ given type, over the last 3 years.
             summary.index.name = "Property"
             summary.name = "Value"
 
-            # maximum number of times area can feature
-            # max_hits = 12 * observation_period + 1 - lookback_window
-
             ethnicity_in_hotspots = pd.DataFrame(columns=ethnicity.columns)
 
             concentration_measures = pd.DataFrame(columns=["Gini", "Captured proportion", "Density Ratio"])
             lorenz_curves = pd.DataFrame()
 
-            consistency_measures = pd.DataFrame(columns=["F1", "Rank-biased overlap", "Spearman Rank Correlation"])
+            consistency_measures = pd.DataFrame(
+                columns=["Cosine similarity", "F1 score", "Rank-biased overlap", "Spearman rank correlation"]
+            )
 
             captured_by_period = pd.DataFrame(index=features.index)
 
@@ -160,20 +174,22 @@ given type, over the last 3 years.
                 )
 
                 if previous_period:
-                    consistency_measures.loc[period, "F1"] = f1_score(
+                    consistency_measures.loc[period, "F1 score"] = f1_score(
                         captured_by_period[previous_period], captured_by_period[period]
                     )
                     count_comparison = ordered_counts[["n_crimes"]].join(
                         previous_ordered_counts.n_crimes.rename("previous")
                     )
                     consistency_measures.loc[period, "Cosine similarity"] = cosine_similarity(count_comparison)
-                    # TODO spearman and RBO
-                    # consistency_measures.loc[period, "Rank-biased overlap"] =
+
+                    consistency_measures.loc[period, "Spearman rank correlation"] = spearman_rank_correlation(
+                        count_comparison
+                    )
+                    consistency_measures.loc[period, "Rank-biased overlap"] = rank_biased_overlap(count_comparison)
                 ethnicity_in_hotspots.loc[period] = ethnicity.loc[ordered_counts[hits].index].sum().T
 
                 previous_period = period
                 previous_ordered_counts = ordered_counts
-            # break
 
         st.markdown(
             f"## {category} in {force} PFA, {counts.columns[0]} to {counts.columns[-1]}\n"
@@ -197,7 +213,6 @@ given type, over the last 3 years.
 
         cols = st.columns(2)
 
-        # demographics_graph.bar_chart(ethnicity, stack=True)
         ethnicity_in_hotspots = 100 * ethnicity_in_hotspots.div(ethnicity_in_hotspots.sum(axis=1), axis=0)
         cols[0].area_chart(ethnicity_in_hotspots, stack=True, height=600)
 
@@ -213,15 +228,6 @@ given type, over the last 3 years.
                 title="Hotspot ethnicity: percentage deviation from PFA average",
             )
         )
-
-        # # annualised crime rate
-        # hit_count.crime_rate *= 12 / max_hits
-        # hit_count = hit_count[hit_count["count"] > 0]
-        # hit_count["opacity"] = 192 * hit_count["count"] / max_hits
-        # hit_count = hit_count.join(ethnicity)
-
-        # for colname, values in ethnicity.div(ethnicity.sum(axis=1), axis=0).fillna(0).items():
-        #     hit_count[colname] = values.apply(lambda x: f"{x:.1%}")
 
         with st.expander("Summary Info"):
             st.table(summary)
