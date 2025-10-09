@@ -45,7 +45,7 @@ def main() -> None:
     st.title("Crime Measures")
 
     st.markdown(
-        "## Highlighting metrics for describing crime concentration, hotspot consistency, and impacted demographics"
+        "### Highlighting metrics for describing crime concentration, hotspot consistency, and impacted demographics"
     )
 
     with st.expander("More info..."):
@@ -61,7 +61,7 @@ rank-biased overlap, Spearman rank correlation
 - demographics: ethnicity proportions in the captures areas versus the PFA average
 
 1. Select the Force Area, Crime Type and Spatial Unit.
-2. Adjust the the land area you want to cover, the number of months to look back (average) over
+2. Adjust as necessary for the captured land area and the number of months to look back (i.e. average) over.
 """)
 
     st.sidebar.header("Measures")
@@ -231,13 +231,6 @@ rank-biased overlap, Spearman rank correlation
 
         with st.expander("Summary Info"):
             st.table(summary)
-
-            # st.dataframe(ethnicity_average)
-            # st.dataframe(
-            #     hit_count.drop(columns=["geometry", "name", "opacity"]).sort_values(
-            #         by=["count", "crime_rate"], ascending=False
-            #     )
-            # )
 
     except Exception as e:
         st.error(e)
