@@ -9,8 +9,8 @@ CONSISTENCY_MEASURES = ("RBO_7", "RBO_8", "RBO_9", "F1_10", "F1_20", "F1_50")
 CONCENTRATION_MEASURES = ("L_10", "L_20", "L_50", "Gini", "Modified Gini")
 
 help = """
-The app uses police.uk public crime data to determine the tradeoff between concentration and consistency for spatially
-and temporally aggregated crimes of a given type, over the last 3 years.
+The app uses [police.uk](https://data.police.uk) public crime data to determine the tradeoff between concentration and
+consistency for spatially and temporally aggregated crimes of a given type, over the last 3 years.
 
 1. Select the Force Area, Crime Type, and Aggregation window (data is not available for all forces).
 2. Select up to 3 each from the concentration and consistency measures.
@@ -19,12 +19,11 @@ and temporally aggregated crimes of a given type, over the last 3 years.
 
 Label | Description
 ------|------------
-L_10 | The proportion of spatial units required to capture 10% of all crime in the time window
-L_20 | The proportion of spatial units required to capture 20% of all crime in the time window
-L_50 | The proportion of spatial units required to capture 50% of all crime in the time window
+L_10  | The proportion of spatial units required to capture 10% of all crime in the time window
+L_20  | The proportion of spatial units required to capture 20% of all crime in the time window
+L_50  | The proportion of spatial units required to capture 50% of all crime in the time window
 Gini  | The naive Gini coefficient
-Modified Gini | [Modified Gini](https://safer-streets.github.io/blog/2025/08/22/measuring-crime-concentration-part-1)
-coefficient
+Modified Gini | [Modified Gini](https://safer-streets.github.io/blog/2025/08/22/measuring-crime-concentration-part-1) coefficient
 
 NB In general, higher values represent higher concentration or consistency. However for the Lorenz (L) measures, a
 _lower_ value indicates greater concentration, so the x-axis is inverted.

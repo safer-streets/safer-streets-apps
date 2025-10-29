@@ -42,7 +42,7 @@ def main() -> None:
 
     with st.expander("More info..."):
         st.markdown("""
-The app uses police.uk public crime data to determine, how consistently areas feature in the top areas for crimes of a
+The app uses [police.uk](https://data.police.uk) public crime data to determine, how consistently areas feature in the top areas for crimes of a
 given type, over the last 3 years.
 
 The interactive map displays the "hot" areas shaded in yellow according to the the number of times they feature in

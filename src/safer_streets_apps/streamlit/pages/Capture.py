@@ -45,7 +45,7 @@ def main() -> None:
     with st.expander("More info..."):
         st.markdown(
             """
-The app uses police.uk public crime data to determine, given a target total land area, the maximum number of
+The app uses [police.uk](https://data.police.uk) public crime data to determine, given a target total land area, the maximum number of
 crimes of a given type that can be captured within that area, in the chosen time window in the last 3 years.
 
 The interactive map displays the "hot" areas (in yellow) with the shaded in proportion to the crime count,
