@@ -91,6 +91,7 @@ def main() -> None:
     force = cast(Force, st.sidebar.selectbox("Force Area", get_args(Force), index=43))  # default="West Yorkshire"
     category = st.sidebar.selectbox("Crime type", CATEGORIES, index=1)
     time_window = st.sidebar.select_slider("Aggregation window (months)", [1, 2, 3, 6, 12])
+    fixed_axes = st.sidebar.checkbox("Fixed axes", value=True, help="Force graph axis scales to [0,1] for better comparison")
     concentration_measures = st.sidebar.multiselect("Concentration measures", CONCENTRATION_MEASURES, max_selections=3)
     consistency_measures = st.sidebar.multiselect("Consistency measures", CONSISTENCY_MEASURES, max_selections=3)
 
@@ -115,8 +116,9 @@ def main() -> None:
                 legend = ax.legend()
                 for item in legend.legend_handles:
                     item.set_alpha(1)
-                ax.set_xlim(0, 1)
-                ax.set_ylim(0, 1)
+                if fixed_axes:
+                    ax.set_xlim(0, 1)
+                    ax.set_ylim(0, 1)
                 if j == len(consistency_measures) - 1:
                     ax.set_xlabel(f"Concentration ({x})")
                 if i == 0:
