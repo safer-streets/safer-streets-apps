@@ -71,10 +71,11 @@ def _get_count_label(data: pd.Series) -> str:
 
 @st.cache_data
 def _cache_tradeoff_data(force: Force) -> pd.DataFrame:
+    # script that generates this data: safer-streets-eda/tradeoff.py
     return pd.read_parquet(data_dir() / f"tradeoff_results_{force}.parquet")
 
 
-def main() -> None:
+def main() -> None:  # noqa: C901
     "Entry point"
     st.title("Crime Tradeoff: Concentration vs Consistency")
 
@@ -91,7 +92,9 @@ def main() -> None:
     force = cast(Force, st.sidebar.selectbox("Force Area", get_args(Force), index=43))  # default="West Yorkshire"
     category = st.sidebar.selectbox("Crime type", CATEGORIES, index=1)
     time_window = st.sidebar.select_slider("Aggregation window (months)", [1, 2, 3, 6, 12])
-    fixed_axes = st.sidebar.checkbox("Fixed axes", value=True, help="Force graph axis scales to [0,1] for better comparison")
+    fixed_axes = st.sidebar.checkbox(
+        "Fixed axes", value=True, help="Force graph axis scales to [0,1] for better comparison"
+    )
     concentration_measures = st.sidebar.multiselect("Concentration measures", CONCENTRATION_MEASURES, max_selections=3)
     consistency_measures = st.sidebar.multiselect("Consistency measures", CONSISTENCY_MEASURES, max_selections=3)
 
