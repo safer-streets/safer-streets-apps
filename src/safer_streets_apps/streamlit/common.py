@@ -34,12 +34,12 @@ geographies = {
     "Middle layer Super Output Areas (census)": ("MSOA21", {}),
     "Lower layer Super Output Areas (census)": ("LSOA21", {}),
     "Output Areas (census)": ("OA21", {}),
-    "800m grid": ("GRID", {"size": 800.0}),
-    "400m grid": ("GRID", {"size": 400.0}),
-    "200m grid": ("GRID", {"size": 200.0}),
-    "500m hexes": ("HEX", {"size": 500.0}),
-    "250m hexes": ("HEX", {"size": 250.0}),
-    "125m hexes": ("HEX", {"size": 125.0}),
+    "800m hexes": ("HEX", {"size": 800.0}),
+    "400m hexes": ("HEX", {"size": 400.0}),
+    "200m hexes": ("HEX", {"size": 200.0}),
+    "1km grid": ("GRID", {"size": 1000.0}),
+    "500m grid": ("GRID", {"size": 500.0}),
+    "250m grid": ("GRID", {"size": 250.0}),
 }
 
 
