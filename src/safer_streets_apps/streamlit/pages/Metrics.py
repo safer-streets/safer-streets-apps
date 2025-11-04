@@ -70,7 +70,7 @@ rank-biased overlap, Spearman rank correlation
 
     category = st.sidebar.selectbox("Crime type", CATEGORIES, index=1)
 
-    spatial_unit_name = st.sidebar.selectbox("Spatial Unit", geographies.keys(), index=1)
+    spatial_unit_name = st.sidebar.selectbox("Spatial Unit", geographies.keys(), index=0)
 
     try:
         with st.spinner("Loading crime and demographic data..."):
