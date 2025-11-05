@@ -58,7 +58,9 @@ def get_counts_and_features(
     return counts, features, boundary
 
 
-def get_ethnicity(raw_population: gpd.GeoDataFrame, features: gpd.GeoDataFrame) -> pd.DataFrame:
+def get_ethnicity(raw_population: gpd.GeoDataFrame | None, features: gpd.GeoDataFrame) -> pd.DataFrame:
+    if raw_population is None:
+        return pd.DataFrame(index=features.index, data={"n/a": 0})
     ethnicity = (
         get_demographics(raw_population, features)
         .groupby(["spatial_unit", "C2021_ETH_20_NAME"], observed=True)["count"]

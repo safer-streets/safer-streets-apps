@@ -63,7 +63,11 @@ the hotspots - that is, the set of areas that capture the most crime for the tot
     try:
         with st.spinner("Loading crime and demographic data..."):
             raw_data, boundary = cache_crime_data(force, category)
-            raw_population = cache_demographic_data(force)
+            try:
+                raw_population = cache_demographic_data(force)
+            except FileNotFoundError as e:
+                st.warning(e)
+                raw_population = None
 
             # map crimes to features
             centroid_lat, centroid_lon = raw_data.lat.mean(), raw_data.lon.mean()

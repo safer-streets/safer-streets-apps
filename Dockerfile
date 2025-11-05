@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:python3.13-trixie
+FROM ghcr.io/astral-sh/uv:python3.13-trixie-slim
 
 # overwrite the some of the uv metadata
 LABEL org.opencontainers.image.title="safer-streets-apps"
@@ -26,7 +26,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install safer_streets_core-0.1.0-py3-none-any.whl streamlit && \
     rm -f safer_streets_core-0.1.0-py3-none-any.whl
 
-COPY . /app
+COPY src /app/src
+COPY assets /app/assets
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"

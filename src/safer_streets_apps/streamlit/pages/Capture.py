@@ -69,7 +69,11 @@ its crime and demographics (Hover on the force area boundary for average values.
     try:
         with st.spinner("Loading crime and demographic data..."):
             raw_data, boundary = cache_crime_data(force, category)
-            raw_population = cache_demographic_data(force)
+            try:
+                raw_population = cache_demographic_data(force)
+            except FileNotFoundError as e:
+                st.warning(e)
+                raw_population = None
 
             # map crimes to features
             centroid_lat, centroid_lon = raw_data.lat.mean(), raw_data.lon.mean()
@@ -235,6 +239,7 @@ its crime and demographics (Hover on the force area boundary for average values.
 
     except Exception as e:
         st.error(e)
+        raise
 
 
 if __name__ == "__main__":
