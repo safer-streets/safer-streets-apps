@@ -8,6 +8,7 @@ requires-python = ">=3.12"
 dependencies = [
     "safer-streets-core",
     "streamlit>=1.48.0",
+    "fastapi[standard]"
 ]
 
 [build-system]

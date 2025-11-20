@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:python3.13-trixie-slim
+FROM ghcr.io/astral-sh/uv:python3.13-trixie
 
 # overwrite the some of the uv metadata
 LABEL org.opencontainers.image.title="safer-streets-apps"
@@ -37,6 +37,8 @@ ENV PYTHONPATH=src
 
 # Reset the entrypoint, don't invoke `uv`
 ENTRYPOINT []
+
+EXPOSE 8000
 
 # Uses `--server.address 0.0.0.0` to allow access from outside the container
 CMD ["streamlit", "run", "src/safer_streets_apps/streamlit/Main.py", "--server.port=8000", "--server.address=0.0.0.0"]

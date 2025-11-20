@@ -66,6 +66,17 @@ its crime and demographics (Hover on the force area boundary for average values.
 
     spatial_unit_name = st.sidebar.selectbox("Spatial Unit", geographies.keys(), index=0)
 
+    # m = folium.Map(location=[53.924, -1.832], zoom_start=16)
+
+    # # add marker
+    # tooltip = "Tooltip"
+    # folium.Marker(
+    #     [53.9228, -1.8326], popup="?", tooltip=tooltip
+    # ).add_to(m)
+
+    # # call to render Folium map in Streamlit
+    # sf.folium_static(m, width=800)
+
     try:
         with st.spinner("Loading crime and demographic data..."):
             raw_data, boundary = cache_crime_data(force, category)
