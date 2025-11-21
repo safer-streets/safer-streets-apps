@@ -50,9 +50,14 @@ docker build -t ghcr.io/safer-streets/safer-streets-apps .
 This command runs the app in the container, mounting your local data directory:
 
 ```sh
-docker run -p5000:5000 --mount type=bind,source=../data,target=/mnt/data -e SAFER_STREETS_DATA_DIR=/mnt/data \
-  ghcr.io/safer-streets/safer-streets-apps
-docker run -p8000:8000 --mount type=bind,source=../data,target=/mnt/data -e SAFER_STREETS_DATA_DIR=/mnt/data \
+docker run -p5000:5000 --mount type=bind,source=../data,target=/mnt/data \
+  -e SAFER_STREETS_DATA_DIR=/mnt/data \
+  ghcr.io/safer-streets/safer-streets-api
+
+docker run -p8000:8000 --mount type=bind,source=../data,target=/mnt/data \
+  -e SAFER_STREETS_DATA_DIR=/mnt/data \
+  -e SAFER_STREETS_API_URL=https://uol-a011-prd-uks-wkld025-asp1-api1-acdkeudzafe8dtc9.uksouth-01.azurewebsites.net \
+  -e SAFER_STREETS_API_KEY=6e25d928f7ba7eba11654a216472ba87 \
   ghcr.io/safer-streets/safer-streets-apps
 ```
 

@@ -1,9 +1,7 @@
-
 import duckdb
 from itrx import Itr
 from safer_streets_core.database import add_table_from_shapefile
 from safer_streets_core.utils import CATEGORIES, data_dir, latest_month, monthgen
-
 
 N_MONTHS = 36
 
@@ -27,7 +25,9 @@ def init_db(con: duckdb.DuckDBPyConnection) -> None:
         "Lower_layer_Super_Output_Areas_December_2021_Boundaries_EW_BGC_V5_4492169359079898015.zip",
         exists_ok=True,
     )
-    add_table_from_shapefile(con, "OA21_boundaries", "Output_Areas_2021_EW_BGC_V2_-6371128854279904124.zip", exists_ok=True)
+    add_table_from_shapefile(
+        con, "OA21_boundaries", "Output_Areas_2021_EW_BGC_V2_-6371128854279904124.zip", exists_ok=True
+    )
 
     # hex grid
     con.execute(

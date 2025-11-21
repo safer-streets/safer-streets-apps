@@ -1,36 +1,76 @@
 import json
-from typing import cast, get_args
+import os
+from io import StringIO
+from typing import Any, cast, get_args
 
+import geopandas as gpd
+import pandas as pd
 import pydeck as pdk
+import requests
 import streamlit as st
+from dotenv import load_dotenv
+from itrx import Itr
 from safer_streets_core.spatial import get_force_boundary
-from safer_streets_core.utils import CATEGORIES, Force, data_dir
+from safer_streets_core.utils import CATEGORIES, Force, latest_month, monthgen
 
 st.set_page_config(layout="wide", page_title="Crime Hotspots", page_icon="👮")
 st.logo("./assets/safer-streets-small.png", size="large")
+
+load_dotenv()
+
+# URL = "http://localhost:5000"
+URL = os.environ["SAFER_STREETS_API_URL"]
+HEADERS = {"x-api-key": os.getenv("SAFER_STREETS_API_KEY")}
+N_MONTHS = 36
+
+HEX_AREA = 0.2**2 * 3**1.5 / 2
+
+
+@st.cache_data
+def get_counts(force: Force, crime_type: str) -> pd.DataFrame:
+    counts = (
+        pd.DataFrame(get("hex_counts", params={"force": force, "category": crime_type}))
+        .set_index(["spatial_unit", "month"])
+        .unstack(level="month", fill_value=0)
+    )
+    counts.columns = counts.columns.droplevel(0)
+    return counts
+
+
+def get(endpoint: str, *, params: dict[str, Any]) -> Any:
+    response = requests.get(f"{URL}/{endpoint}", params=params, headers=HEADERS)
+    response.raise_for_status()
+    return response.json()
+
+
+def post(endpoint: str, payload: Any) -> Any:
+    response = requests.post(f"{URL}/{endpoint}", json=payload, headers=HEADERS)
+    response.raise_for_status()
+    return response.json()
 
 
 def main() -> None:
     st.title("Crime Hotspot Explorer")
 
     st.warning(
-        "##### :construction: This page is still in development and currently uses precomputed data, "
-        "which is only available for the "
-        "Metropolitan Police and West Yorkshire Forces at 1% coverage."
+        "##### :construction: This page uses the experimental Safer Streets [geospatial data API]"
+        "(https://uol-a011-prd-uks-wkld025-asp1-api1-acdkeudzafe8dtc9.uksouth-01.azurewebsites.net/docs#/)"
     )
 
-    st.markdown("## Highlighting how temporal scales affect crime hotspots")
+    st.markdown("## Highlighting how temporal scales affect crime hotspots within a Police Force Area")
 
     with st.expander("More info..."):
-        st.markdown(
-            """
+        st.markdown("""
 The app uses [police.uk](https://data.police.uk) public crime data to determine, given a target total land area, the
 maximum number of crimes of a given type that can be captured within that area, in the chosen time window in the last
 3 years.
 
-A rolling window of crime counts (1, 3, or 12 months) are aggregated onto a hex grid (200m side, ~350m height) and
-ranked. The top 1% of cells are recorded for each window. The window is updated and the ranks recomputed to cover the
-3 years of data.
+Firstly select a threshold for hotspots, in terms of percentage coverage of the force area, between 0.1% and 5%. (At
+least one hex cell will be considered).
+
+A rolling window of crime counts (1, 3, 6, or 12 months) are aggregated onto a hex grid (200m side, ~350m height) and
+ranked. The top percentage of cells are recorded for each window. The window is updated and the ranks recomputed to
+cover the 3 years of data.
 
 (As an example of the iteration: a 2-month update on a 3-month window will step from {Jan, Feb, Mar} to {Mar, Apr, May})
 
@@ -38,49 +78,79 @@ Finally, spatial units are then ranked by the number of times each spatial unit 
 year period.
 
 The interactive map displays the hotspot hex cells shaded in proportion to their frequency as a hotspot.
-
-"""
-        )
+""")
 
     st.sidebar.header("Hotspots")
 
     force = cast(Force, st.sidebar.selectbox("Force Area", get_args(Force), index=43))  # default="West Yorkshire"
 
+    # _spatial_unit = st.sidebar.selectbox(
+    #     "Spatial unit", ["Hex cell", "Output area"], help="Choose either 200m hex cell or census output area"
+    # )
+
     crime_type = st.sidebar.selectbox("Crime type", CATEGORIES, index=1)
 
-    _coverage = st.sidebar.slider(
+    coverage = st.sidebar.select_slider(
         "Area Coverage (%)",
-        1.0,
-        1.01,
-        step=1.0,
+        options=[0.1, 0.5, 1.0, 5.0],
         value=1.0,
         help="Percentage of hex cells to consider as hotspots",
     )
 
     window = st.sidebar.select_slider(
         "Lookback window (months)",
-        options=[1, 3, 12],
+        options=[1, 3, 6, 12],
         value=1,
         help="Number of months of data to aggregate when determining hotspots",
     )
 
     update = st.sidebar.select_slider(
         "Update interval (months)",
-        options=[1, 2, 3],
+        options=[1, 2, 3, 6],
         value=1,
         help="Number of months to step when determining window",
     )
 
     try:
-        with st.spinner("Loading data..."):
-            filename = f"hotspots/{force}-hotspots-{crime_type}-{window}m-rolling-{update}m-update.geojson"
-            # hotspots = gpd.read_file(data_dir() / filename)
-            with (data_dir() / filename).open() as fd:
-                hotspot_data = json.load(fd)
+        with st.spinner("Loading crime data..."):
+            counts = get_counts(force, crime_type)
+
+        with st.spinner("Processing data..."):
+            timeline = (
+                Itr(monthgen(latest_month(), backwards=True)).take(N_MONTHS).rev().rolling(window).step_by(update)
+            )
+            hotspot_area = coverage * get("pfa_area", params={"force": force}) / 100
+            n_hotspots = max(1, int(hotspot_area / HEX_AREA))
+
+            temp = []
+            for slice in timeline:
+                months = [str(m) for m in slice]
+                temp.append(
+                    counts[months].sum(axis=1).sort_values(ascending=False).head(n_hotspots).reset_index().spatial_unit
+                )
+
+            ranks = pd.concat(temp).value_counts()
+
+        with st.spinner("Loading spatial data..."):
+            hexes = gpd.read_file(StringIO(json.dumps(post("hexes", ranks.index.to_list())))).set_index("id")
+            # TODO annoyingly comes back with a string index, can this be fixed?
+            hexes.index = hexes.index.astype(int)
+            # TODO also return in CRS we need for pydeck?
+            hexes = hexes.join(ranks).to_crs(epsg=4326)
+            n_obs = ((N_MONTHS - window) // update + 1)
+            hexes["Frequency (%)"] = round(100.0 * hexes["count"] / n_obs, 1)
 
             boundary = get_force_boundary(force).to_crs(epsg=4326)
+            centroid = boundary.union_all().centroid
 
-        centroid = boundary.union_all().centroid
+        st.markdown(
+            f"### Hotspot repetition, {crime_type} in {force}, {latest_month() - N_MONTHS + 1} to {latest_month()}"
+        )
+
+        st.markdown(
+            f"##### {window}-month lookback at {update}-month intervals ({n_obs} "
+            f"observations). {coverage}% coverage corresponds to {n_hotspots} hex cells. {len(hexes)} calls feature at least once as hotspots"
+        )
 
         # render map
         view_state = pdk.ViewState(
@@ -105,22 +175,18 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
         hotspot_layer = (
             pdk.Layer(
                 "GeoJsonLayer",
-                hotspot_data,
+                hexes.__geo_interface__,
                 stroked=True,
                 filled=True,
                 wireframe=True,
                 get_fill_color="[192, 0, 0, properties['Frequency (%)']]",  # [255, 0, 0, 160],
-                # get_fill_color="[201, 241, 0, properties['Frequency (%)']]",  # [255, 0, 0, 160],
                 get_line_color=[0x80, 0x80, 0x80, 0x80],
-                # get_line_color=[0xC9, 0xF1, 0x00, 0xA0],
                 line_width_min_pixels=2,
                 pickable=True,
             ),
         )
 
-        tooltip = {
-            "html": f"Cell {{id}} appears {{Frequency (%)}}% of the time<br/>({window} month lookback, {update} month update)"
-        }
+        tooltip = {"html": f"Cell {{id}}, hotspot appears {{Frequency (%)}}% of the time ({{count}}/{n_obs})"}
 
         st.pydeck_chart(
             pdk.Deck(
@@ -134,7 +200,6 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
 
     except Exception as e:
         st.error(e)
-        raise
 
 
 if __name__ == "__main__":
