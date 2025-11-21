@@ -23,7 +23,9 @@ SAFER_STREETS_DATA_DIR=<insert-here> streamlit run src/safer_streets_apps/stream
 ```
 
 
-## Container
+## Containers
+
+TODO docker compose...
 
 ### Prerequisites
 
@@ -39,6 +41,7 @@ This currently relies on temporary manual workarounds:
 NB this includes the `data-local` folder (West Yorkshire only) and the Dockerfile hard-codes this location
 
 ```sh
+docker build -f Dockerfile.api -t ghcr.io/safer-streets/safer-streets-api .
 docker build -t ghcr.io/safer-streets/safer-streets-apps .
 ```
 
@@ -47,17 +50,22 @@ docker build -t ghcr.io/safer-streets/safer-streets-apps .
 This command runs the app in the container, mounting your local data directory:
 
 ```sh
+docker run -p5000:5000 --mount type=bind,source=../data,target=/mnt/data -e SAFER_STREETS_DATA_DIR=/mnt/data \
+  ghcr.io/safer-streets/safer-streets-apps
 docker run -p8000:8000 --mount type=bind,source=../data,target=/mnt/data -e SAFER_STREETS_DATA_DIR=/mnt/data \
   ghcr.io/safer-streets/safer-streets-apps
 ```
 
 (On Azure, mount storage (Settings → Configuration → Path Mappings) and set the environment variable appropriately)
 
+The API requires an API key (header parameter `x-api-key`) for authentication.
+
 ### Push
 
 This requires a PAT.
 
 ```sh
+docker push ghcr.io/safer-streets/safer-streets-api
 docker push ghcr.io/safer-streets/safer-streets-apps
 ```
 
@@ -70,7 +78,8 @@ not delete (yet)!**
 
 - [X] Multipage app - v2 of explorer (using area), another page measuring persistence of areas
 - [X] Demographics demo
-- [ ] Docker-compose implementation with full datasets on the cloud or in a volume...
+- [ ] Docker-compose implementation with
+- [X] full datasets on the cloud or in a volume...
 - [ ] ...then remove redundant demo branch
 - [ ] improve UX
 
