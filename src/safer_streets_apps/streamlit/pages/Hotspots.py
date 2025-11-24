@@ -137,7 +137,7 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
             hexes.index = hexes.index.astype(int)
             # TODO also return in CRS we need for pydeck?
             hexes = hexes.join(ranks).to_crs(epsg=4326)
-            n_obs = ((N_MONTHS - window) // update + 1)
+            n_obs = (N_MONTHS - window) // update + 1
             hexes["Frequency (%)"] = round(100.0 * hexes["count"] / n_obs, 1)
 
             boundary = get_force_boundary(force).to_crs(epsg=4326)
@@ -149,7 +149,7 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
 
         st.markdown(
             f"##### {window}-month lookback at {update}-month intervals ({n_obs} "
-            f"observations). {coverage}% coverage corresponds to {n_hotspots} hex cells. {len(hexes)} calls feature at least once as hotspots"
+            f"observations). {coverage}% coverage corresponds to {n_hotspots} hex cells. {len(hexes)} cells feature at least once as hotspots."
         )
 
         # render map
@@ -186,7 +186,7 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
             ),
         )
 
-        tooltip = {"html": f"Cell {{id}}, hotspot appears {{Frequency (%)}}% of the time ({{count}}/{n_obs})"}
+        tooltip = {"html": f"Cell {{id}}<br/>Hotspot {{Frequency (%)}}% of the time ({{count}}/{n_obs})"}
 
         st.pydeck_chart(
             pdk.Deck(

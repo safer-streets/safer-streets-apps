@@ -31,11 +31,16 @@ app = FastAPI(title="Safer Streets API", lifespan=lifespan, dependencies=[Depend
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
+async def validation_exception_handler(_request: Request, exc: RequestValidationError):
     return JSONResponse(
         status_code=400,
         content={"error": "Invalid input", "details": exc.errors()},
     )
+
+
+@app.exception_handler(Exception)
+async def http_exception_handler(_request: Request, exc: Exception):
+    return JSONResponse(status_code=400, content={"error": exc.__class__.__name__, "detail": str(exc)})
 
 
 @app.get("/pfa_area")
@@ -53,6 +58,8 @@ async def hexes(ids: list[int]):
     Queries to fetch all hexes for a PFA are too slow/large
     """
     raw_hexes = app.state.con.sql(sql.HEXES, params=(ids,)).fetchdf()
+    # TODO is there a more efficient way of rendering GeoJSON, including properties and CRS,
+    # without going via geopandas?
     hexes = gpd.GeoDataFrame(
         raw_hexes[["spatial_unit"]], geometry=raw_hexes.wkt.apply(wkt.loads), crs="epsg:27700"
     ).set_index("spatial_unit", drop=True)
@@ -74,18 +81,22 @@ async def census_geographies(geography: CensusGeography, force: Force):
 @app.get("/hex_counts")
 async def hex_counts(force: Force, category: Category):
     """Returns counts for crimes aggregated to hexes for given force and category for all months by spatial unit id"""
-    data = app.state.con.sql(sql.HEX_COUNTS, params=(fix_force_name(force), category)).fetchdf()
-    return data.to_dict()
+    return app.state.con.sql(sql.HEX_COUNTS, params=(fix_force_name(force), category)).fetch_arrow_table().to_pylist()
 
 
 @app.get("/census_counts")
 async def census_counts(geography: CensusGeography, force: Force, category: Category):
-    assert geography == "OA21", "only implemented for OA21. TODO: aggregate to L/MSOA21"
-    """Returns counts for crimes aggregated to census geographies for given force and category for all months by spatial unit id"""
-    data = app.state.con.sql(
-        sql.CENSUS_COUNTS.format(geography=geography), params=(fix_force_name(force), category)
-    ).fetchdf()
-    return data.to_dict()
+    """
+    Returns counts for crimes aggregated to census geographies for given force and category for all months by
+    spatial unit id
+    """
+    if geography != "OA21":
+        raise ValueError("only implemented for OA21. TODO: aggregate to L/MSOA21")
+    return (
+        app.state.con.sql(sql.CENSUS_COUNTS.format(geography=geography), params=(fix_force_name(force), category))
+        .fetch_arrow_table()
+        .to_pylist()
+    )
 
 
 @app.get("/hotspots")

@@ -3,6 +3,8 @@ from itrx import Itr
 from safer_streets_core.database import add_table_from_shapefile
 from safer_streets_core.utils import CATEGORIES, data_dir, latest_month, monthgen
 
+from safer_streets_apps.fastapi import sql
+
 N_MONTHS = 36
 
 
@@ -30,9 +32,7 @@ def init_db(con: duckdb.DuckDBPyConnection) -> None:
     )
 
     # hex grid
-    con.execute(
-        f"CREATE TABLE IF NOT EXISTS hex200 AS SELECT * FROM '{data_dir() / 'england_wales_HEX-200_untrimmed.parquet'}'"
-    )
+    con.execute(f"CREATE TABLE hex200 AS SELECT * FROM '{data_dir() / 'england_wales_HEX-200_untrimmed.parquet'}'")
 
     timeline = Itr(monthgen(latest_month(), backwards=True)).take(N_MONTHS).rev()
 
@@ -49,34 +49,5 @@ def init_db(con: duckdb.DuckDBPyConnection) -> None:
     """)
 
     # transform to counts
-    query = """
-    CREATE TABLE crime_counts AS
-    SELECT
-        h.spatial_unit AS spatial_unit,
-        c."Crime type" AS crime_type,
-        c.Month AS month,
-        COUNT(c.Month) AS count
-    FROM
-        hex200 h
-    RIGHT JOIN
-        crime_data c ON ST_Intersects(h.geometry, c.geom)
-    GROUP BY
-        spatial_unit, month, crime_type;
-    """
-    con.execute(query)
-
-    query = """
-    CREATE TABLE crime_counts_oa AS
-    SELECT
-        h.OA21CD AS spatial_unit,
-        c."Crime type" AS crime_type,
-        c.Month AS month,
-    COUNT(c.Month) AS count
-    FROM
-        OA21_boundaries h
-    RIGHT JOIN
-        crime_data c ON ST_Intersects(h.geom, c.geom)
-    GROUP BY
-        spatial_unit, month, crime_type;
-    """
-    con.execute(query)
+    con.execute(sql.AGGREGATE_TO_HEX)
+    con.execute(sql.AGGREGATE_TO_OA21)

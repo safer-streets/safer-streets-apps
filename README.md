@@ -10,6 +10,8 @@ uv sync --active --dev
 
 ## Run locally
 
+### App
+
 From the activated venv, picking up the default data dir:
 
 ```sh
@@ -22,6 +24,21 @@ If you want to point it to another data dir (NB the docker image hard-codes this
 SAFER_STREETS_DATA_DIR=<insert-here> streamlit run src/safer_streets_apps/streamlit/Main.py
 ```
 
+### API
+
+From the activated venv, run a local dev API (using port 5000 to avoid conflicting with streamlit on 8000), picking up
+the default data dir:
+
+```sh
+fastapi dev src/safer_streets_apps/fastapi/app.py --port 5000
+```
+
+Use the [swagger page](http://localhost:8000/docs) to test the endpoints or use `curl`, e.g.
+
+```sh
+curl 'http://localhost:8000/pfa_area?force=West%20Yorkshire' \
+  -H 'accept: application/json' -H 'x-api-key: '$SAFER_STREETS_API_KEY
+```
 
 ## Containers
 

@@ -1,3 +1,35 @@
+AGGREGATE_TO_HEX = """
+CREATE TABLE crime_counts AS
+SELECT
+    h.spatial_unit AS spatial_unit,
+    c."Crime type" AS crime_type,
+    c.Month AS month,
+    COUNT(c.Month) AS count
+FROM
+    hex200 h
+RIGHT JOIN
+    crime_data c ON ST_Intersects(h.geometry, c.geom)
+GROUP BY
+    spatial_unit, month, crime_type;
+"""
+
+
+AGGREGATE_TO_OA21 = """
+CREATE TABLE crime_counts_oa AS
+SELECT
+    h.OA21CD AS spatial_unit,
+    c."Crime type" AS crime_type,
+    c.Month AS month,
+COUNT(c.Month) AS count
+FROM
+    OA21_boundaries h
+RIGHT JOIN
+    crime_data c ON ST_Intersects(h.geom, c.geom)
+GROUP BY
+    spatial_unit, month, crime_type;
+"""
+
+
 PFA_AREA = """
 SELECT ST_Area(ST_Union_Agg(geom)) / 1000000
 FROM force_boundaries WHERE PFA23NM = ?
@@ -74,5 +106,26 @@ RIGHT JOIN h ON h.spatial_unit = c.spatial_unit
 WHERE c.crime_type = $2 AND c.month = ANY($3)
 GROUP BY c.spatial_unit, wkt
 ORDER BY count DESC, c.spatial_unit ASC
+LIMIT $4;
+"""
+
+# get OA counts GDF for a single force, using density as a tiebreak (i.e. favour smaller OAs)
+FORCE_HOTSPOTS_OA = """
+WITH h AS (
+    SELECT * FROM OA21_boundaries
+    WHERE ST_Intersects(
+        OA21_boundaries.geom,
+        (SELECT ST_Union_Agg(geom) FROM force_boundaries WHERE PFA23NM = $1)
+    )
+)
+SELECT
+    c.spatial_unit, SUM(c.count) AS count,
+    ST_Area(h.geom) / 1000000 AS area,
+    ST_AsText(h.geom) AS wkt
+FROM crime_counts_oa c
+RIGHT JOIN h ON h.OA21CD = c.spatial_unit
+WHERE c.crime_type = $2 AND c.month = ANY($3)
+GROUP BY c.spatial_unit, wkt, h.geom
+ORDER BY count DESC, SUM(count) / area DESC, c.spatial_unit ASC
 LIMIT $4;
 """
