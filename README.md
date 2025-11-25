@@ -62,9 +62,11 @@ docker build -f Dockerfile.api -t ghcr.io/safer-streets/safer-streets-api .
 docker build -t ghcr.io/safer-streets/safer-streets-apps .
 ```
 
-### Run
+### Run locally
 
-This command runs the app in the container, mounting your local data directory:
+The API requires an API key (header parameter `x-api-key`) for authentication.
+
+Run the app/api containers, mounting your local data directory:
 
 ```sh
 docker run -p5000:5000 --mount type=bind,source=../data,target=/mnt/data \
@@ -73,14 +75,12 @@ docker run -p5000:5000 --mount type=bind,source=../data,target=/mnt/data \
 
 docker run -p8000:8000 --mount type=bind,source=../data,target=/mnt/data \
   -e SAFER_STREETS_DATA_DIR=/mnt/data \
-  -e SAFER_STREETS_API_URL=https://uol-a011-prd-uks-wkld025-asp1-api1-acdkeudzafe8dtc9.uksouth-01.azurewebsites.net \
-  -e SAFER_STREETS_API_KEY=6e25d928f7ba7eba11654a216472ba87 \
+  -e SAFER_STREETS_API_URL=http://localhost:5000 \
+  -e SAFER_STREETS_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
   ghcr.io/safer-streets/safer-streets-apps
 ```
 
 (On Azure, mount storage (Settings → Configuration → Path Mappings) and set the environment variable appropriately)
-
-The API requires an API key (header parameter `x-api-key`) for authentication.
 
 ### Push
 
@@ -93,8 +93,14 @@ docker push ghcr.io/safer-streets/safer-streets-apps
 
 ## Note
 
-The existing hosted demo app (including data) is on a dedicated branch (streamlit) in the safer-streets-eda repo. **Do
+- The existing hosted demo app (including data) is on a dedicated branch (streamlit) in the safer-streets-eda repo. **Do
 not delete (yet)!**
+
+- To (re)generate an API key and its hash:
+
+  ```sh
+  openssl rand -hex 16 | tee >(xxd -r -p | sha256sum)
+  ```
 
 ## TODO
 

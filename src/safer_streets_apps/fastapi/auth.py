@@ -5,7 +5,7 @@ from fastapi.security import APIKeyHeader
 
 api_key = APIKeyHeader(name="x-api-key")
 
-KEY_HASH = "a496326a89556f5a09c423657e60ef14a1da7e87e30ba1875662524ac510185f"
+KEY_HASH = "ac446dd018bd0b0810633e24953beaf39435cbf753250f4110a387a0af7a64f3"
 
 
 async def handle_api_key(_: Request, key: str = Security(api_key)) -> None:
