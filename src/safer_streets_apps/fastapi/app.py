@@ -1,6 +1,6 @@
 import json
 from contextlib import asynccontextmanager
-from typing import Annotated, Literal
+from typing import Annotated, Any, AsyncGenerator, Literal
 
 import geopandas as gpd
 from fastapi import Depends, FastAPI, Query, Request
@@ -18,9 +18,13 @@ from safer_streets_apps.fastapi.startup import init_db
 
 Category = Literal["Violence and sexual offences", "Anti-social behaviour", "Possession of weapons"]
 
+# TODO tighten up these models
+DfJson = list[dict[str, Any]]
+GeoJson = dict[str, Any]
+
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     app.state.con = ephemeral_duckdb_spatial_connector()
     init_db(app.state.con)
     yield
@@ -31,7 +35,7 @@ app = FastAPI(title="Safer Streets API", lifespan=lifespan, dependencies=[Depend
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_exception_handler(_request: Request, exc: RequestValidationError):
+async def validation_exception_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
     return JSONResponse(
         status_code=400,
         content={"error": "Invalid input", "details": exc.errors()},
@@ -39,8 +43,14 @@ async def validation_exception_handler(_request: Request, exc: RequestValidation
 
 
 @app.exception_handler(Exception)
-async def http_exception_handler(_request: Request, exc: Exception):
+async def http_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=400, content={"error": exc.__class__.__name__, "detail": str(exc)})
+
+
+@app.get("/diagnostics")
+async def diagnostics() -> dict[str, Any]:
+    memory = app.state.con.sql("SELECT SUM(memory_usage_bytes) / 1024 ** 2 FROM duckdb_memory();").fetchone()[0]
+    return {"memory (MB)": memory}
 
 
 @app.get("/pfa_area")
@@ -52,7 +62,7 @@ async def pfa_area(force: Force) -> float:
 
 
 @app.post("/hexes")
-async def hexes(ids: list[int]):
+async def hexes(ids: list[int]) -> GeoJson:
     """
     Return geometries for requested spatial units.
     Queries to fetch all hexes for a PFA are too slow/large
@@ -67,7 +77,7 @@ async def hexes(ids: list[int]):
 
 
 @app.get("/census_geographies")
-async def census_geographies(geography: CensusGeography, force: Force):
+async def census_geographies(geography: CensusGeography, force: Force) -> GeoJson:
     """Return geojson containing census geographies"""
     raw = app.state.con.sql(
         sql.CENSUS_GEOGRAPHIES.format(geography=geography), params=[fix_force_name(force)]
@@ -79,13 +89,13 @@ async def census_geographies(geography: CensusGeography, force: Force):
 
 
 @app.get("/hex_counts")
-async def hex_counts(force: Force, category: Category):
+async def hex_counts(force: Force, category: Category) -> DfJson:
     """Returns counts for crimes aggregated to hexes for given force and category for all months by spatial unit id"""
     return app.state.con.sql(sql.HEX_COUNTS, params=(fix_force_name(force), category)).fetch_arrow_table().to_pylist()
 
 
 @app.get("/census_counts")
-async def census_counts(geography: CensusGeography, force: Force, category: Category):
+async def census_counts(geography: CensusGeography, force: Force, category: Category) -> DfJson:
     """
     Returns counts for crimes aggregated to census geographies for given force and category for all months by
     spatial unit id
@@ -107,7 +117,7 @@ async def hotspots(
     month: Annotated[str, Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")],
     lookback: Annotated[int, Query(ge=1, le=12)] = 1,
     n_hotspots: Annotated[int, Query(ge=1)],
-):
+) -> GeoJson:
     """
     Return geojson of top n_hotpots with features and counts for a specific force (or England & Wales if no
     force specified), category and month
