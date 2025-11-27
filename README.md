@@ -33,10 +33,10 @@ the default data dir:
 fastapi dev src/safer_streets_apps/fastapi/app.py --port 5000
 ```
 
-Use the [swagger page](http://localhost:8000/docs) to test the endpoints or use `curl`, e.g.
+Use the [swagger page](http://localhost:5000/docs) to test the endpoints or use `curl`, e.g.
 
 ```sh
-curl 'http://localhost:8000/pfa_area?force=West%20Yorkshire' \
+curl 'http://localhost:5000/pfa_area?force=West%20Yorkshire' \
   -H 'accept: application/json' -H 'x-api-key: '$SAFER_STREETS_API_KEY
 ```
 
@@ -80,7 +80,8 @@ docker run -p8000:8000 --mount type=bind,source=../data,target=/mnt/data \
   ghcr.io/safer-streets/safer-streets-apps
 ```
 
-(On Azure, mount storage (Settings → Configuration → Path Mappings) and set the environment variable appropriately)
+(On Azure, mount storage (Settings → Configuration → Path Mappings) and set the environment variable appropriately.
+Also ensure the API env vars are set.)
 
 ### Push
 

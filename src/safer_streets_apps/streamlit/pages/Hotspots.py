@@ -26,6 +26,10 @@ N_MONTHS = 36
 HEX_AREA = 0.2**2 * 3**1.5 / 2
 
 
+def _make_label(timeslice: tuple[str]):
+    return timeslice[0] if len(timeslice) == 1 else f"{timeslice[0]} to {timeslice[-1]}"
+
+
 @st.cache_data
 def get_counts(force: Force, crime_type: str) -> pd.DataFrame:
     counts = (
@@ -119,15 +123,18 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
             timeline = (
                 Itr(monthgen(latest_month(), backwards=True)).take(N_MONTHS).rev().rolling(window).step_by(update)
             )
-            hotspot_area = coverage * get("pfa_area", params={"force": force}) / 100
+            pfa_area = get("pfa_area", params={"force": force})
+            hotspot_area = coverage * pfa_area / 100
             n_hotspots = max(1, int(hotspot_area / HEX_AREA))
 
+            props = pd.Series()
             temp = []
             for slice in timeline:
                 months = [str(m) for m in slice]
-                temp.append(
-                    counts[months].sum(axis=1).sort_values(ascending=False).head(n_hotspots).reset_index().spatial_unit
-                )
+                ranked = counts[months].sum(axis=1).sort_values(ascending=False)
+                hotspots = ranked.head(n_hotspots)
+                props.loc[_make_label(months)] = 100 * hotspots.sum() / ranked.sum()
+                temp.append(ranked.head(n_hotspots).reset_index().spatial_unit)
 
             ranks = pd.concat(temp).value_counts()
 
@@ -147,10 +154,12 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
             f"### Hotspot repetition, {crime_type} in {force}, {latest_month() - N_MONTHS + 1} to {latest_month()}"
         )
 
-        st.markdown(
-            f"##### {window}-month lookback at {update}-month intervals ({n_obs} "
-            f"observations). {coverage}% coverage corresponds to {n_hotspots} hex cells. {len(hexes)} cells feature at least once as hotspots."
-        )
+        st.markdown(f"""
+            - **{window}-month lookback at {update}-month intervals ({n_obs} observations).**
+            - **{coverage}% coverage corresponds to {n_hotspots} hex cells ({HEX_AREA * n_hotspots:.1f}km²).**
+            - **{len(hexes)} cells ({HEX_AREA * len(hexes):.1f}km²) feature at least once as hotspots. (Total PFA area
+            is {pfa_area:.1f}km²)**
+        """)
 
         # render map
         view_state = pdk.ViewState(
@@ -198,8 +207,15 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
             height=960,
         )
 
+        st.markdown(
+            f"#### Time variation of proportion of crimes captured within the {coverage:.1f}% hotspot coverage:"
+        )
+
+        st.bar_chart(props, x_label="Time window", y_label="Percentage of crime in hotspot")
+
     except Exception as e:
         st.error(e)
+        raise
 
 
 if __name__ == "__main__":
