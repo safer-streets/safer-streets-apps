@@ -1,26 +1,23 @@
-import json
+from collections import defaultdict
 from contextlib import asynccontextmanager
-from typing import Annotated, Any, AsyncGenerator, Literal
+from typing import Annotated, Any, AsyncGenerator
 
 import geopandas as gpd
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import Depends, FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from itrx import Itr
 from safer_streets_core.database import ephemeral_duckdb_spatial_connector
 from safer_streets_core.spatial import CensusGeography
-from safer_streets_core.utils import Force, Month, fix_force_name, monthgen
+from safer_streets_core.utils import CrimeType, Force, Month, fix_force_name, monthgen
 from shapely import wkt
 
 import safer_streets_apps.fastapi.sql as sql
 from safer_streets_apps.fastapi.auth import handle_api_key
 from safer_streets_apps.fastapi.startup import init_db
 
-Category = Literal["Violence and sexual offences", "Anti-social behaviour", "Possession of weapons"]
-
 # TODO tighten up these models
 DfJson = list[dict[str, Any]]
-GeoJson = dict[str, Any]
 
 
 @asynccontextmanager
@@ -50,9 +47,16 @@ async def http_exception_handler(_request: Request, exc: Exception) -> JSONRespo
 @app.get("/diagnostics")
 async def diagnostics() -> dict[str, Any]:
     memory = app.state.con.sql("SELECT SUM(memory_usage_bytes) / 1024 ** 2 FROM duckdb_memory();").fetchone()[0]
-    return {"memory (MB)": memory}
+
+    schema = defaultdict(dict)
+
+    for col in app.state.con.sql(sql.TABLE_SCHEMAS).fetchall():
+        schema[col[0]][col[1]] = col[2]
+
+    return {"memory (MB)": memory, "table_schemas": schema}
 
 
+# TODO combine PFA area, centroid (Lat/Lon) and boundary
 @app.get("/pfa_area")
 async def pfa_area(force: Force) -> float:
     """
@@ -61,8 +65,15 @@ async def pfa_area(force: Force) -> float:
     return app.state.con.sql(sql.PFA_AREA, params=(fix_force_name(force),)).fetchone()[0]
 
 
+@app.get("/pfa_boundary")
+async def pfa_boundary(force: Force) -> Response:
+    raw_boundary = app.state.con.sql("SELECT ST_AsGeoJson(geometry) FROM force_boundaries WHERE PFA23NM = ?", params=(fix_force_name(force),)).fetchone()[0]
+    # avoid pointless de-re-serialisation
+    return Response(content=raw_boundary, media_type="application/json")
+
+
 @app.post("/hexes")
-async def hexes(ids: list[int]) -> GeoJson:
+async def hexes(ids: list[int]) -> Response:
     """
     Return geometries for requested spatial units.
     Queries to fetch all hexes for a PFA are too slow/large
@@ -73,11 +84,11 @@ async def hexes(ids: list[int]) -> GeoJson:
     hexes = gpd.GeoDataFrame(
         raw_hexes[["spatial_unit"]], geometry=raw_hexes.wkt.apply(wkt.loads), crs="epsg:27700"
     ).set_index("spatial_unit", drop=True)
-    return json.loads(hexes.to_json())
+    return Response(content=hexes.to_json(), media_type="application/json")
 
 
 @app.get("/census_geographies")
-async def census_geographies(geography: CensusGeography, force: Force) -> GeoJson:
+async def census_geographies(geography: CensusGeography, force: Force) -> Response:
     """Return geojson containing census geographies"""
     raw = app.state.con.sql(
         sql.CENSUS_GEOGRAPHIES.format(geography=geography), params=[fix_force_name(force)]
@@ -85,17 +96,17 @@ async def census_geographies(geography: CensusGeography, force: Force) -> GeoJso
     features = gpd.GeoDataFrame(raw[["spatial_unit"]], geometry=raw.wkt.apply(wkt.loads), crs="epsg:27700").set_index(
         "spatial_unit", drop=True
     )
-    return json.loads(features.to_json())
+    return Response(content=features.to_json(), media_type="application/json")
 
 
 @app.get("/hex_counts")
-async def hex_counts(force: Force, category: Category) -> DfJson:
+async def hex_counts(force: Force, category: CrimeType) -> DfJson:
     """Returns counts for crimes aggregated to hexes for given force and category for all months by spatial unit id"""
     return app.state.con.sql(sql.HEX_COUNTS, params=(fix_force_name(force), category)).fetch_arrow_table().to_pylist()
 
 
 @app.get("/census_counts")
-async def census_counts(geography: CensusGeography, force: Force, category: Category) -> DfJson:
+async def census_counts(geography: CensusGeography, force: Force, category: CrimeType) -> DfJson:
     """
     Returns counts for crimes aggregated to census geographies for given force and category for all months by
     spatial unit id
@@ -113,11 +124,11 @@ async def census_counts(geography: CensusGeography, force: Force, category: Cate
 async def hotspots(
     *,
     force: Force | None = None,
-    category: Category,
+    category: CrimeType,
     month: Annotated[str, Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")],
     lookback: Annotated[int, Query(ge=1, le=12)] = 1,
     n_hotspots: Annotated[int, Query(ge=1)],
-) -> GeoJson:
+) -> Response:
     """
     Return geojson of top n_hotpots with features and counts for a specific force (or England & Wales if no
     force specified), category and month
@@ -126,10 +137,10 @@ async def hotspots(
     months = Itr(monthgen(Month.parse_str(month), backwards=True)).take(lookback).map(str).collect()
 
     if not force:
-        query = sql.NATIONAL_HOTSPOTS
+        query = sql.NATIONAL_HOTSPOTS_HEX
         params = [category, months, n_hotspots]
     else:
-        query = sql.FORCE_HOTSPOTS
+        query = sql.FORCE_HOTSPOTS_HEX
         params = [fix_force_name(force), category, months, n_hotspots]
 
     hotspots = app.state.con.sql(query, params=params).fetchdf()
@@ -139,4 +150,4 @@ async def hotspots(
         .dropna()
     )
 
-    return json.loads(hotspots.to_json())
+    return Response(content=hotspots.to_json(), media_type="application/json")

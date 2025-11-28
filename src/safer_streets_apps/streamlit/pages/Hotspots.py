@@ -11,7 +11,7 @@ import streamlit as st
 from dotenv import load_dotenv
 from itrx import Itr
 from safer_streets_core.spatial import get_force_boundary
-from safer_streets_core.utils import CATEGORIES, Force, latest_month, monthgen
+from safer_streets_core.utils import CrimeType, Force, latest_month, monthgen
 
 st.set_page_config(layout="wide", page_title="Crime Hotspots", page_icon="👮")
 st.logo("./assets/safer-streets-small.png", size="large")
@@ -92,7 +92,7 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
     #     "Spatial unit", ["Hex cell", "Output area"], help="Choose either 200m hex cell or census output area"
     # )
 
-    crime_type = st.sidebar.selectbox("Crime type", CATEGORIES, index=1)
+    crime_type = st.sidebar.selectbox("Crime type", get_args(CrimeType), index=5)
 
     coverage = st.sidebar.select_slider(
         "Area Coverage (%)",
@@ -147,6 +147,7 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
             n_obs = (N_MONTHS - window) // update + 1
             hexes["Frequency (%)"] = round(100.0 * hexes["count"] / n_obs, 1)
 
+            # TODO get from API when centroid available
             boundary = get_force_boundary(force).to_crs(epsg=4326)
             centroid = boundary.union_all().centroid
 

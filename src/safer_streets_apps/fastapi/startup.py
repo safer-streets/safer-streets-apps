@@ -1,7 +1,8 @@
+from typing import get_args
 import duckdb
 from itrx import Itr
 from safer_streets_core.database import add_table_from_shapefile
-from safer_streets_core.utils import CATEGORIES, data_dir, latest_month, monthgen
+from safer_streets_core.utils import CrimeType, CATEGORIES, data_dir, latest_month, monthgen
 
 from safer_streets_apps.fastapi import sql
 
@@ -11,28 +12,30 @@ N_MONTHS = 36
 def init_db(con: duckdb.DuckDBPyConnection) -> None:
     # force boundaries
     add_table_from_shapefile(
-        con, "force_boundaries", "Police_Force_Areas_December_2023_EW_BFE_2734900428741300179.zip", exists_ok=True
+        con, "force_boundaries", "PFA23NM", "Police_Force_Areas_December_2023_EW_BFE_2734900428741300179.zip", exists_ok=True
     )
 
     # census boundaries
     add_table_from_shapefile(
         con,
         "MSOA21_boundaries",
+        "MSOA21CD",
         "Middle_layer_Super_Output_Areas_December_2021_Boundaries_EW_BGC_V3_-6221323399304446140.zip",
         exists_ok=True,
     )
     add_table_from_shapefile(
         con,
         "LSOA21_boundaries",
+        "LSOA21CD",
         "Lower_layer_Super_Output_Areas_December_2021_Boundaries_EW_BGC_V5_4492169359079898015.zip",
         exists_ok=True,
     )
     add_table_from_shapefile(
-        con, "OA21_boundaries", "Output_Areas_2021_EW_BGC_V2_-6371128854279904124.zip", exists_ok=True
+        con, "OA21_boundaries", "OA21CD", "Output_Areas_2021_EW_BGC_V2_-6371128854279904124.zip", exists_ok=True
     )
 
     # hex grid
-    con.execute(f"CREATE TABLE hex200 AS SELECT * FROM '{data_dir() / 'england_wales_HEX-200_untrimmed.parquet'}'")
+    con.execute(f"CREATE TABLE hex200 AS SELECT spatial_unit, geometry FROM '{data_dir() / 'england_wales_HEX-200_untrimmed.parquet'}'")
 
     timeline = Itr(monthgen(latest_month(), backwards=True)).take(N_MONTHS).rev()
 
@@ -40,12 +43,14 @@ def init_db(con: duckdb.DuckDBPyConnection) -> None:
     all_files = Itr(data_dir().glob(f"extracted/{month}*street.parquet") for month in timeline).flatten()
 
     con.execute(f"""
-        CREATE TABLE crime_data AS SELECT *
+        CREATE TABLE crime_data AS SELECT
+            Month AS month,
+            "Reported by" AS reporter,
+            "Falls within" AS force,
+            "Crime type" AS crime_type,
+            ST_Transform(ST_Point(Longitude, Latitude), 'EPSG:4326', 'EPSG:27700', always_xy := true) AS geometry
         FROM read_parquet({[f"{str(f)}" for f in all_files]})
-        WHERE "Crime type" = ANY({list(CATEGORIES)});
-        ALTER TABLE crime_data ADD COLUMN geom GEOMETRY;
-        UPDATE crime_data
-        SET geom = ST_Transform(ST_Point(Longitude, Latitude), 'EPSG:4326', 'EPSG:27700', always_xy := true);
+        WHERE crime_type = ANY({list(get_args(CrimeType))});
     """)
 
     # transform to counts
