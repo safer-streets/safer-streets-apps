@@ -1,6 +1,7 @@
 import json
 import os
 from io import StringIO
+import time
 from typing import Any, cast, get_args
 
 import geopandas as gpd
@@ -10,7 +11,6 @@ import requests
 import streamlit as st
 from dotenv import load_dotenv
 from itrx import Itr
-from safer_streets_core.spatial import get_force_boundary
 from safer_streets_core.utils import CrimeType, Force, latest_month, monthgen
 
 st.set_page_config(layout="wide", page_title="Crime Hotspots", page_icon="👮")
@@ -18,8 +18,8 @@ st.logo("./assets/safer-streets-small.png", size="large")
 
 load_dotenv()
 
-# URL = "http://localhost:5000"
-URL = os.environ["SAFER_STREETS_API_URL"]
+URL = "http://localhost:5000"
+# URL = os.environ["SAFER_STREETS_API_URL"]
 HEADERS = {"x-api-key": os.getenv("SAFER_STREETS_API_KEY")}
 N_MONTHS = 36
 
@@ -31,7 +31,7 @@ def _make_label(timeslice: tuple[str]):
 
 
 @st.cache_data
-def get_counts(force: Force, crime_type: str) -> pd.DataFrame:
+def get_counts(force: Force, crime_type: CrimeType) -> pd.DataFrame:
     counts = (
         pd.DataFrame(get("hex_counts", params={"force": force, "category": crime_type}))
         .set_index(["spatial_unit", "month"])
@@ -123,8 +123,8 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
             timeline = (
                 Itr(monthgen(latest_month(), backwards=True)).take(N_MONTHS).rev().rolling(window).step_by(update)
             )
-            pfa_area = get("pfa_area", params={"force": force})
-            hotspot_area = coverage * pfa_area / 100
+            pfa_geodata = get("pfa_geodata", params={"force": force})
+            hotspot_area = coverage * pfa_geodata["properties"]["area"] / 100
             n_hotspots = max(1, int(hotspot_area / HEX_AREA))
 
             props = pd.Series()
@@ -142,14 +142,10 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
             hexes = gpd.read_file(StringIO(json.dumps(post("hexes", ranks.index.to_list())))).set_index("id")
             # TODO annoyingly comes back with a string index, can this be fixed?
             hexes.index = hexes.index.astype(int)
-            # TODO also return in CRS we need for pydeck?
+            # TODO also return in CRS we need for pydeck? Low priority - join/transform below takes ~20ms
             hexes = hexes.join(ranks).to_crs(epsg=4326)
             n_obs = (N_MONTHS - window) // update + 1
             hexes["Frequency (%)"] = round(100.0 * hexes["count"] / n_obs, 1)
-
-            # TODO get from API when centroid available
-            boundary = get_force_boundary(force).to_crs(epsg=4326)
-            centroid = boundary.union_all().centroid
 
         st.markdown(
             f"### Hotspot repetition, {crime_type} in {force}, {latest_month() - N_MONTHS + 1} to {latest_month()}"
@@ -159,20 +155,20 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
             - **{window}-month lookback at {update}-month intervals ({n_obs} observations).**
             - **{coverage}% coverage corresponds to {n_hotspots} hex cells ({HEX_AREA * n_hotspots:.1f}km²).**
             - **{len(hexes)} cells ({HEX_AREA * len(hexes):.1f}km²) feature at least once as hotspots. (Total PFA area
-            is {pfa_area:.1f}km²)**
+            is {pfa_geodata["properties"]["area"]:.1f}km²)**
         """)
 
         # render map
         view_state = pdk.ViewState(
-            latitude=centroid.y,
-            longitude=centroid.x,
+            latitude=pfa_geodata["properties"]["lat"],
+            longitude=pfa_geodata["properties"]["lon"],
             zoom=9,
             pitch=22,
         )
 
         boundary_layer = pdk.Layer(
             "GeoJsonLayer",
-            boundary.__geo_interface__,
+            pfa_geodata,
             opacity=0.5,
             stroked=True,
             filled=False,

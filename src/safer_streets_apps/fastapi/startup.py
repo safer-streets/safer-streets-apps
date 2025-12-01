@@ -1,8 +1,10 @@
 from typing import get_args
+import logging
+
 import duckdb
 from itrx import Itr
 from safer_streets_core.database import add_table_from_shapefile
-from safer_streets_core.utils import CrimeType, CATEGORIES, data_dir, latest_month, monthgen
+from safer_streets_core.utils import CATEGORIES, CrimeType, data_dir, latest_month, monthgen
 
 from safer_streets_apps.fastapi import sql
 
@@ -10,9 +12,15 @@ N_MONTHS = 36
 
 
 def init_db(con: duckdb.DuckDBPyConnection) -> None:
+
+    logging.info("Initialising database")
     # force boundaries
     add_table_from_shapefile(
-        con, "force_boundaries", "PFA23NM", "Police_Force_Areas_December_2023_EW_BFE_2734900428741300179.zip", exists_ok=True
+        con,
+        "force_boundaries",
+        "PFA23NM",
+        "Police_Force_Areas_December_2023_EW_BFE_2734900428741300179.zip",
+        exists_ok=True,
     )
 
     # census boundaries
@@ -35,7 +43,10 @@ def init_db(con: duckdb.DuckDBPyConnection) -> None:
     )
 
     # hex grid
-    con.execute(f"CREATE TABLE hex200 AS SELECT spatial_unit, geometry FROM '{data_dir() / 'england_wales_HEX-200_untrimmed.parquet'}'")
+    con.execute(
+        f"CREATE TABLE hex200 AS SELECT spatial_unit, geometry FROM '{data_dir() / 'england_wales_HEX-200_untrimmed.parquet'}'"
+    )
+    logging.info("Initialised spatial data")
 
     timeline = Itr(monthgen(latest_month(), backwards=True)).take(N_MONTHS).rev()
 
@@ -53,6 +64,26 @@ def init_db(con: duckdb.DuckDBPyConnection) -> None:
         WHERE crime_type = ANY({list(get_args(CrimeType))});
     """)
 
+    logging.info("Initialised crime data")
+
     # transform to counts
-    con.execute(sql.AGGREGATE_TO_HEX)
-    con.execute(sql.AGGREGATE_TO_OA21)
+    cache_file = data_dir() / f"duckdb_cache/crime_counts_hex_{latest_month()}.parquet"
+    if not cache_file.exists():
+        logging.info("Creating hex crime count table")
+        con.execute(sql.AGGREGATE_TO_HEX)
+        con.sql("SELECT * FROM crime_counts_hex").fetchdf().to_parquet(cache_file)
+    else:
+        logging.info("Using cached hex crime count table")
+        con.execute(f"CREATE TABLE crime_counts_hex AS SELECT * FROM read_parquet('{cache_file}')")
+
+    cache_file = data_dir() / f"duckdb_cache/crime_counts_oa_{latest_month()}.parquet"
+    if not cache_file.exists():
+        logging.info("Creating OA21 crime count table")
+        con.execute(sql.AGGREGATE_TO_OA21)
+        con.sql("SELECT * FROM crime_counts_oa").fetchdf().to_parquet(cache_file)
+    else:
+        logging.info("Using cached OA21 crime count table")
+        con.execute(f"CREATE TABLE crime_counts_oa AS SELECT * FROM read_parquet('{cache_file}')")
+
+    logging.info("Initialised crime count data")
+    logging.info("Database initialisation complete")

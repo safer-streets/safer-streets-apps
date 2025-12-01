@@ -30,9 +30,20 @@ GROUP BY
 """
 
 
-PFA_AREA = """
-SELECT ST_Area(ST_Union_Agg(geometry)) / 1000000
-FROM force_boundaries WHERE PFA23NM = ?
+PFA_GEODATA = """
+WITH g as (
+    SELECT
+        ST_Area(geometry) / 1000000 AS area,
+        ST_Transform(geometry, 'EPSG:27700', 'EPSG:4326', always_xy := true) AS geometry
+    FROM force_boundaries
+    WHERE PFA23NM = ?
+)
+SELECT
+    area,
+    ST_X(ST_Centroid(geometry)),
+    ST_Y(ST_Centroid(geometry)),
+    ST_AsGeoJson(geometry)
+FROM g
 """
 
 

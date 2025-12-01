@@ -1,3 +1,4 @@
+import logging
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, AsyncGenerator
@@ -19,6 +20,13 @@ from safer_streets_apps.fastapi.startup import init_db
 # TODO tighten up these models
 DfJson = list[dict[str, Any]]
 
+
+# Configure basic logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -56,27 +64,31 @@ async def diagnostics() -> dict[str, Any]:
     return {"memory (MB)": memory, "table_schemas": schema}
 
 
-# TODO combine PFA area, centroid (Lat/Lon) and boundary
-@app.get("/pfa_area")
-async def pfa_area(force: Force) -> float:
-    """
-    Returns the area in km² of the given Police Force Area
-    """
-    return app.state.con.sql(sql.PFA_AREA, params=(fix_force_name(force),)).fetchone()[0]
+@app.get("/pfa_geodata")
+async def pfa_boundary(force: Force) -> Response:  # dict[str, Any]:
+    """Return area, centroid and geometry of PFA (in geojson format using lat/lon CRS)"""
+    raw_data = app.state.con.sql(sql.PFA_GEODATA, params=(fix_force_name(force),),).fetchone()
 
-
-@app.get("/pfa_boundary")
-async def pfa_boundary(force: Force) -> Response:
-    raw_boundary = app.state.con.sql("SELECT ST_AsGeoJson(geometry) FROM force_boundaries WHERE PFA23NM = ?", params=(fix_force_name(force),)).fetchone()[0]
-    # avoid pointless de-re-serialisation
-    return Response(content=raw_boundary, media_type="application/json")
+    return Response(
+        content=f"""{{
+            "type": "Feature", "geometry": {raw_data[3]},
+            "properties": {{
+                "area": {raw_data[0]},
+                "lon": {raw_data[1]},
+                "lat": {raw_data[2]}
+            }}
+        }}""",
+        media_type="application/json",
+    )
 
 
 @app.post("/hexes")
-async def hexes(ids: list[int]) -> Response:
+async def hexes(ids: list[int], latlon: Annotated[bool, Query] = False) -> Response:
     """
-    Return geometries for requested spatial units.
+    Return geometries for requested hex features.
     Queries to fetch all hexes for a PFA are too slow/large
+    Will return (BNG, epsg=27700) coordiates
+    Unless latlon is True (epsg=4326)
     """
     raw_hexes = app.state.con.sql(sql.HEXES, params=(ids,)).fetchdf()
     # TODO is there a more efficient way of rendering GeoJSON, including properties and CRS,
@@ -84,6 +96,8 @@ async def hexes(ids: list[int]) -> Response:
     hexes = gpd.GeoDataFrame(
         raw_hexes[["spatial_unit"]], geometry=raw_hexes.wkt.apply(wkt.loads), crs="epsg:27700"
     ).set_index("spatial_unit", drop=True)
+    if latlon:
+        hexes = hexes.to_crs(epsg=4326)
     return Response(content=hexes.to_json(), media_type="application/json")
 
 
