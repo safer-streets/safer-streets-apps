@@ -1,10 +1,10 @@
-from typing import get_args
 import logging
+from typing import get_args
 
 import duckdb
 from itrx import Itr
 from safer_streets_core.database import add_table_from_shapefile
-from safer_streets_core.utils import CATEGORIES, CrimeType, data_dir, latest_month, monthgen
+from safer_streets_core.utils import CrimeType, data_dir, latest_month, monthgen
 
 from safer_streets_apps.fastapi import sql
 
@@ -12,7 +12,6 @@ N_MONTHS = 36
 
 
 def init_db(con: duckdb.DuckDBPyConnection) -> None:
-
     logging.info("Initialising database")
     # force boundaries
     add_table_from_shapefile(

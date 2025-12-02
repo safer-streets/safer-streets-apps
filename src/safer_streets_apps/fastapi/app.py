@@ -28,6 +28,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     app.state.con = ephemeral_duckdb_spatial_connector()
@@ -67,7 +68,10 @@ async def diagnostics() -> dict[str, Any]:
 @app.get("/pfa_geodata")
 async def pfa_boundary(force: Force) -> Response:  # dict[str, Any]:
     """Return area, centroid and geometry of PFA (in geojson format using lat/lon CRS)"""
-    raw_data = app.state.con.sql(sql.PFA_GEODATA, params=(fix_force_name(force),),).fetchone()
+    raw_data = app.state.con.sql(
+        sql.PFA_GEODATA,
+        params=(fix_force_name(force),),
+    ).fetchone()
 
     return Response(
         content=f"""{{
@@ -87,8 +91,7 @@ async def hexes(ids: list[int], latlon: Annotated[bool, Query] = False) -> Respo
     """
     Return geometries for requested hex features.
     Queries to fetch all hexes for a PFA are too slow/large
-    Will return (BNG, epsg=27700) coordiates
-    Unless latlon is True (epsg=4326)
+    Will return BNG (epsg=27700) coordinates unless `latlon=True` (epsg=4326)
     """
     raw_hexes = app.state.con.sql(sql.HEXES, params=(ids,)).fetchdf()
     # TODO is there a more efficient way of rendering GeoJSON, including properties and CRS,

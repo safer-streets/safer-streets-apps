@@ -1,7 +1,6 @@
 import json
 import os
 from io import StringIO
-import time
 from typing import Any, cast, get_args
 
 import geopandas as gpd
@@ -11,6 +10,7 @@ import requests
 import streamlit as st
 from dotenv import load_dotenv
 from itrx import Itr
+from safer_streets_core.charts import DEFAULT_COLOUR
 from safer_streets_core.utils import CrimeType, Force, latest_month, monthgen
 
 st.set_page_config(layout="wide", page_title="Crime Hotspots", page_icon="👮")
@@ -18,8 +18,8 @@ st.logo("./assets/safer-streets-small.png", size="large")
 
 load_dotenv()
 
-URL = "http://localhost:5000"
-# URL = os.environ["SAFER_STREETS_API_URL"]
+# URL = "http://localhost:5000"
+URL = os.environ["SAFER_STREETS_API_URL"]
 HEADERS = {"x-api-key": os.getenv("SAFER_STREETS_API_KEY")}
 N_MONTHS = 36
 
@@ -108,6 +108,13 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
         help="Number of months of data to aggregate when determining hotspots",
     )
 
+    prediction_window = st.sidebar.select_slider(
+        "Prediction window (months)",
+        options=[1, 3, 6, 12],
+        value=1,
+        help="Number of months of data to look forward when determining how well hotspots predict future crimes",
+    )
+
     update = st.sidebar.select_slider(
         "Update interval (months)",
         options=[1, 2, 3, 6],
@@ -123,17 +130,38 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
             timeline = (
                 Itr(monthgen(latest_month(), backwards=True)).take(N_MONTHS).rev().rolling(window).step_by(update)
             )
+
+            # subsequent prediction_window months for each window in timeline, padded where data isnt available
+            # prediction_timeline = Itr(monthgen(timeline.peek()[-1] + 1)).take(N_MONTHS - window).rolling(prediction_window).step_by(update)
+            prediction_timeline = (
+                Itr(monthgen(timeline.peek()[-1] + 1))
+                .take(N_MONTHS - window)
+                .rolling(prediction_window)
+                .step_by(update)
+                .chain([None] * prediction_window)
+            )
+
             pfa_geodata = get("pfa_geodata", params={"force": force})
             hotspot_area = coverage * pfa_geodata["properties"]["area"] / 100
             n_hotspots = max(1, int(hotspot_area / HEX_AREA))
 
-            props = pd.Series()
+            props = pd.DataFrame(columns=["Time slice", "Proportion in hotspots", "Proportion predicted by hotspots"])
             temp = []
-            for slice in timeline:
+            for i, (slice, prediction_slice) in timeline.zip(prediction_timeline).enumerate():
                 months = [str(m) for m in slice]
                 ranked = counts[months].sum(axis=1).sort_values(ascending=False)
                 hotspots = ranked.head(n_hotspots)
-                props.loc[_make_label(months)] = 100 * hotspots.sum() / ranked.sum()
+                props.loc[i, "Time slice"] = _make_label(months)
+                props.loc[i, "Proportion in hotspots"] = 100 * hotspots.sum() / ranked.sum()
+
+                if prediction_slice:
+                    pred_months = [str(m) for m in prediction_slice]
+                    pred_counts = counts[pred_months].sum(axis=1)
+                    # pred_props[_make_label(pred_months)] = 100 * pred_counts.loc[hotspots.index].sum() / pred_counts.sum()
+                    props.loc[i, "Time slice"] += " predicting " + _make_label(pred_months)
+                    props.loc[i, "Proportion predicted by hotspots"] = (
+                        100 * pred_counts.loc[hotspots.index].sum() / pred_counts.sum()
+                    )
                 temp.append(ranked.head(n_hotspots).reset_index().spatial_unit)
 
             ranks = pd.concat(temp).value_counts()
@@ -150,13 +178,6 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
         st.markdown(
             f"### Hotspot repetition, {crime_type} in {force}, {latest_month() - N_MONTHS + 1} to {latest_month()}"
         )
-
-        st.markdown(f"""
-            - **{window}-month lookback at {update}-month intervals ({n_obs} observations).**
-            - **{coverage}% coverage corresponds to {n_hotspots} hex cells ({HEX_AREA * n_hotspots:.1f}km²).**
-            - **{len(hexes)} cells ({HEX_AREA * len(hexes):.1f}km²) feature at least once as hotspots. (Total PFA area
-            is {pfa_geodata["properties"]["area"]:.1f}km²)**
-        """)
 
         # render map
         view_state = pdk.ViewState(
@@ -201,14 +222,36 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
                 initial_view_state=view_state,
                 tooltip=tooltip,
             ),
-            height=960,
+            height=800,
         )
+
+        st.markdown(f"""
+            - **{window}-month lookback at {update}-month intervals ({n_obs} observations)**
+            - **{prediction_window}-month prediction window ({sum(~props["Proportion predicted by hotspots"].isna())} predictions)**
+            - **{coverage}% coverage corresponds to {n_hotspots} hex cells ({HEX_AREA * n_hotspots:.1f}km²)**
+            - **{len(hexes)} cells ({HEX_AREA * len(hexes):.1f}km²) feature at least once as hotspots. (Total PFA area
+            is {pfa_geodata["properties"]["area"]:.1f}km²)**
+        """)
 
         st.markdown(
-            f"#### Time variation of proportion of crimes captured within the {coverage:.1f}% hotspot coverage:"
+            f"#### Time variation of percentage of crimes captured and predicted within the {coverage:.1f}% hotspot coverage:"
         )
 
-        st.bar_chart(props, x_label="Time window", y_label="Percentage of crime in hotspot")
+        # this is potentially misleading as the lookback and prediction windows are not necessarily the same size
+        # props["Proportion predicted by hotspots"] = props["Proportion predicted by hotspots"].shift()
+
+        st.bar_chart(
+            props,
+            height=400,
+            x="Time slice",
+            y=["Proportion in hotspots", "Proportion predicted by hotspots"],
+            x_label="Time window",
+            stack="layered",
+            color=[DEFAULT_COLOUR, "#C00000"],
+            y_label="Percentage of crime captured",
+        )
+        with st.expander("View hotspot capture data"):
+            st.dataframe(props.set_index("Time slice", drop=True).style.format("{:.1f}%"))
 
     except Exception as e:
         st.error(e)
