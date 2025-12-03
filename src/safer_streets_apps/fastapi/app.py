@@ -4,9 +4,9 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any, AsyncGenerator
 
 import geopandas as gpd
-from fastapi import Depends, FastAPI, Query, Request, Response
+from fastapi import APIRouter, Depends, FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from itrx import Itr
 from safer_streets_core.database import ephemeral_duckdb_spatial_connector
 from safer_streets_core.spatial import CensusGeography
@@ -37,7 +37,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     app.state.con.close()
 
 
-app = FastAPI(title="Safer Streets API", lifespan=lifespan, dependencies=[Depends(handle_api_key)])
+# using Stoplight elements for docs (requires an endpoint without auth)
+app = FastAPI(
+    title="Safer Streets API",
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    description="API serving public-domain crime (geo)data.",
+)
+
+open_routes = APIRouter(dependencies=[])
+auth_routes = APIRouter(dependencies=[Depends(handle_api_key)])
 
 
 @app.exception_handler(RequestValidationError)
@@ -53,7 +63,31 @@ async def http_exception_handler(_request: Request, exc: Exception) -> JSONRespo
     return JSONResponse(status_code=400, content={"error": exc.__class__.__name__, "detail": str(exc)})
 
 
-@app.get("/diagnostics")
+@open_routes.get("/docs", include_in_schema=False)
+async def api_documentation(request: Request):
+    return HTMLResponse("""
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>Elements in HTML</title>
+
+    <script src="https://unpkg.com/@stoplight/elements/web-components.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/@stoplight/elements/styles.min.css">
+  </head>
+  <body>
+
+    <elements-api
+      apiDescriptionUrl="openapi.json"
+      router="hash"
+    />
+
+  </body>
+</html>""")
+
+
+@auth_routes.get("/diagnostics")
 async def diagnostics() -> dict[str, Any]:
     memory = app.state.con.sql("SELECT SUM(memory_usage_bytes) / 1024 ** 2 FROM duckdb_memory();").fetchone()[0]
 
@@ -65,7 +99,7 @@ async def diagnostics() -> dict[str, Any]:
     return {"memory (MB)": memory, "table_schemas": schema}
 
 
-@app.get("/pfa_geodata")
+@auth_routes.get("/pfa_geodata")
 async def pfa_boundary(force: Force) -> Response:  # dict[str, Any]:
     """Return area, centroid and geometry of PFA (in geojson format using lat/lon CRS)"""
     raw_data = app.state.con.sql(
@@ -86,7 +120,7 @@ async def pfa_boundary(force: Force) -> Response:  # dict[str, Any]:
     )
 
 
-@app.post("/hexes")
+@auth_routes.post("/hexes")
 async def hexes(ids: list[int], latlon: Annotated[bool, Query] = False) -> Response:
     """
     Return geometries for requested hex features.
@@ -104,7 +138,7 @@ async def hexes(ids: list[int], latlon: Annotated[bool, Query] = False) -> Respo
     return Response(content=hexes.to_json(), media_type="application/json")
 
 
-@app.get("/census_geographies")
+@auth_routes.get("/census_geographies")
 async def census_geographies(geography: CensusGeography, force: Force) -> Response:
     """Return geojson containing census geographies"""
     raw = app.state.con.sql(
@@ -116,13 +150,13 @@ async def census_geographies(geography: CensusGeography, force: Force) -> Respon
     return Response(content=features.to_json(), media_type="application/json")
 
 
-@app.get("/hex_counts")
+@auth_routes.get("/hex_counts")
 async def hex_counts(force: Force, category: CrimeType) -> DfJson:
     """Returns counts for crimes aggregated to hexes for given force and category for all months by spatial unit id"""
     return app.state.con.sql(sql.HEX_COUNTS, params=(fix_force_name(force), category)).fetch_arrow_table().to_pylist()
 
 
-@app.get("/census_counts")
+@auth_routes.get("/census_counts")
 async def census_counts(geography: CensusGeography, force: Force, category: CrimeType) -> DfJson:
     """
     Returns counts for crimes aggregated to census geographies for given force and category for all months by
@@ -137,7 +171,7 @@ async def census_counts(geography: CensusGeography, force: Force, category: Crim
     )
 
 
-@app.get("/hotspots")
+@auth_routes.get("/hotspots")
 async def hotspots(
     *,
     force: Force | None = None,
@@ -168,3 +202,7 @@ async def hotspots(
     )
 
     return Response(content=hotspots.to_json(), media_type="application/json")
+
+
+app.include_router(open_routes)
+app.include_router(auth_routes)
