@@ -37,6 +37,7 @@ geographies = {
     "800m hexes": ("HEX", {"size": 800.0}),
     "400m hexes": ("HEX", {"size": 400.0}),
     "200m hexes": ("HEX", {"size": 200.0}),
+    "H3(9)": ("H3", {"resolution": 9}),
     "1km grid": ("GRID", {"size": 1000.0}),
     "500m grid": ("GRID", {"size": 500.0}),
     "250m grid": ("GRID", {"size": 250.0}),
