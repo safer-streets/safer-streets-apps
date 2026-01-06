@@ -13,8 +13,7 @@ from safer_streets_core.spatial import (
 )
 from safer_streets_core.utils import Force, get_monthly_crime_counts, latest_month, load_crime_data, monthgen
 
-LATEST_DATE = latest_month()
-all_months = Itr(monthgen(LATEST_DATE, backwards=True)).take(36).rev().collect()
+all_months = Itr(monthgen(latest_month(), backwards=True)).take(36).rev().collect()
 
 
 @st.cache_data
