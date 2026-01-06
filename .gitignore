@@ -12,3 +12,5 @@ output/
 
 uv.lock
 data*/
+
+chroma_store/
