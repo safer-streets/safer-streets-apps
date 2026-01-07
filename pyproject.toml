@@ -9,6 +9,11 @@ dependencies = [
     "safer-streets-core",
     "streamlit>=1.48.0",
     "fastapi[standard]",
+    "google-genai",
+    "chromadb",
+    "bm25s",
+    "PyPDF2",
+    "PyStemmer",
 ]
 
 [build-system]
