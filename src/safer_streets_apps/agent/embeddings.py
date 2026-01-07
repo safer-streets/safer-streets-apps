@@ -9,9 +9,11 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 import chromadb
 import numpy as np
+from bm25s import BM25, tokenize
 from chromadb.api.types import Embeddings
 from chromadb.config import Settings
 from chromadb.utils.embedding_functions import EmbeddingFunction
@@ -19,11 +21,38 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from itrx import Itr
+from Stemmer import Stemmer
 
 load_dotenv()
 
 
 client = genai.Client()
+
+class BM25Wrapper:
+    def __init__(self, corpus: list[str]) -> None:
+        self.stemmer = Stemmer("english")
+        self.corpus = corpus
+        corpus_tokens = tokenize(corpus, stopwords="en", stemmer=self.stemmer)
+        # Create the BM25 model and index the corpus
+        self.retriever = BM25()
+        self.retriever.index(corpus_tokens)
+
+    def retrieve(self, query: str, k: int) -> list[tuple[str, dict[str, Any], float]]:
+        query_tokens = tokenize(query, stemmer=self.stemmer)
+
+        # # Get top-k results as a tuple of (doc ids, scores). Both are arrays of shape (n_queries, k).
+        # # To return docs instead of IDs, set the `corpus=corpus` parameter.
+        indices, scores = self.retriever.retrieve(query_tokens, k=5)
+
+        results = []
+
+        # NB 1.25 picked out of thin air based on a single query
+        for i in range(indices.shape[1]):
+            idx, score = indices[0, i], scores[0, i]
+            results.append((self.corpus[idx], {"source": "BM25", "chunk_index": int(idx)}, 1.25 / score))
+        return results
+
+
 
 # TODO switch to mongo?
 # Chroma embedding functor (Gemini)
@@ -102,7 +131,8 @@ def answer_with_gemini(query: str, retrieved: list[tuple[str, dict, float]], tem
         "If the answer isn't present, say you don't know.\n\n"
         f"Context:\n{context}\n\n"
         f"Question: {query}\n"
-        "Answer concisely and include citations like [0], [1] referencing the blocks above."
+        "Firstly determine the relevant facts from the context, then "
+        "answer concisely using only those facts, including citations like [0], [1] referencing the blocks above."
     )
 
     resp = client.models.generate_content(
@@ -116,6 +146,9 @@ def build_rag_from_chunks(json_path: Path, collection_name: str = "pdf_rag", per
     with json_path.open() as fd:
         passages = json.load(fd)
 
+    # Create the BM25 model and index the corpus
+    retriever = BM25Wrapper(passages)
+
     # Create collection with a DOCUMENT-optimized embedding function
     ef_docs = GeminiEmbedding(output_dim=768, task_type="RETRIEVAL_DOCUMENT")
     collection = get_collection(persist_dir, collection_name, ef_docs)
@@ -127,32 +160,54 @@ def build_rag_from_chunks(json_path: Path, collection_name: str = "pdf_rag", per
     else:
         print(f"Collection '{collection_name}' already has {collection.count()} items. Skipping re-index.")
 
-    return passages, collection
+    return passages, collection, retriever
 
 
-def answer_question(query: str, collection, top_k: int = 5) -> tuple[str, list]:
+def answer_question(query: str, collection, bm25_retriever, top_k: int = 5) -> tuple[str, list]:
     retrieved = retrieve(collection, query, top_k=top_k)
+
+    retrieved_bm25 = bm25_retriever.retrieve(query, k = 5)
+
+    ret_indices = [r[1]["chunk_index"] for r in retrieved]
+    for r in retrieved_bm25:
+        if r[1]["chunk_index"] not in ret_indices:
+            retrieved.append(r)
+
     answer = answer_with_gemini(query, retrieved, temperature=0.0)
     return answer, retrieved
 
 
+# TODO
+# [X] implement hybrid retrieval - vector + keyword score (BM25/keyword/regex)
+# [ ] rewrite/expand query
+# [ ] multi-vector embeddings
+# [ ] improve chunking
+# [ ] implement reranking - cross-encoder/LLM step. this should be a big win
+# [ ] Summarize retrieved chunks with respect to the query
+# [ ] Dynamic top-n
+# [X] Cite-Then-Answer Prompting: list relevant facts, then answer using only those facts
+# [ ] allow looping - LLM requests more context, reject insufficient evidence, ask for clarification
+# [ ] self verification
+
 if __name__ == "__main__":
-    # json chunks should be a list of strings
-    if len(sys.argv) < 3:
-        print(f'Usage: python {__file__} <json-chunks> "<question>"')
-        sys.exit(1)
+    try:
+        # json chunks should be a list of strings
+        if len(sys.argv) < 3:
+            print(f'Usage: python {__file__} <json-chunks> "<question>"')
+            sys.exit(1)
 
-    json_path = Path(sys.argv[1])
-    question = sys.argv[2]
+        json_path = Path(sys.argv[1])
+        question = sys.argv[2]
 
-    _, collection = build_rag_from_chunks(json_path, collection_name="pdf_rag", persist_dir="./chroma_store")
-    answer, hits = answer_question(question, collection, top_k=5)
+        _, embeddings, keywords = build_rag_from_chunks(json_path, collection_name="pdf_rag", persist_dir="./chroma_store")
 
-    print("\n--- Retrieved Chunks ---\n")
-    for i, (doc, meta, dist) in enumerate(hits):
-        print(f"[{i}] {meta}  distance={dist:.4f}")
-        print(doc[:400].replace("\n", " ") + ("..." if len(doc) > 400 else ""))
-        print()
+        answer, hits = answer_question(question, embeddings, keywords, top_k=5)
 
-    print("\n--- Answer ---\n")
-    print(answer)
+        print("\n--- Retrieved Chunks ---\n")
+        for i, (doc, meta, dist) in enumerate(hits):
+            print(f"[{i}] {doc[:20]} {meta}  distance={dist:.4f}")
+
+        print("\n--- Answer ---\n")
+        print(answer)
+    except Exception as e:
+        print(e)
