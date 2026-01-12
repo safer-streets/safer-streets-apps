@@ -1,15 +1,11 @@
-import json
-import os
-from io import StringIO
-from typing import Any, cast, get_args
+from typing import cast, get_args
 
-import geopandas as gpd
 import pandas as pd
 import pydeck as pdk
-import requests
 import streamlit as st
 from dotenv import load_dotenv
 from itrx import Itr
+from safer_streets_core.api_helpers import fetch_df, fetch_gdf, get
 from safer_streets_core.charts import DEFAULT_COLOUR
 from safer_streets_core.utils import CrimeType, Force, latest_month, monthgen
 
@@ -19,8 +15,8 @@ st.logo("./assets/safer-streets-small.png", size="large")
 load_dotenv()
 
 # URL = "http://localhost:5000"
-URL = os.environ["SAFER_STREETS_API_URL"]
-HEADERS = {"x-api-key": os.getenv("SAFER_STREETS_API_KEY")}
+# URL = os.environ["SAFER_STREETS_API_URL"]
+# HEADERS = {"x-api-key": os.getenv("SAFER_STREETS_API_KEY")}
 N_MONTHS = 36
 
 HEX_AREA = 0.2**2 * 3**1.5 / 2
@@ -33,24 +29,12 @@ def _make_label(timeslice: tuple[str]):
 @st.cache_data
 def get_counts(force: Force, crime_type: CrimeType) -> pd.DataFrame:
     counts = (
-        pd.DataFrame(get("hex_counts", params={"force": force, "category": crime_type}))
+        fetch_df("hex_counts", params={"force": force, "category": crime_type})
         .set_index(["spatial_unit", "month"])
         .unstack(level="month", fill_value=0)
     )
     counts.columns = counts.columns.droplevel(0)
     return counts
-
-
-def get(endpoint: str, *, params: dict[str, Any]) -> Any:
-    response = requests.get(f"{URL}/{endpoint}", params=params, headers=HEADERS)
-    response.raise_for_status()
-    return response.json()
-
-
-def post(endpoint: str, payload: Any) -> Any:
-    response = requests.post(f"{URL}/{endpoint}", json=payload, headers=HEADERS)
-    response.raise_for_status()
-    return response.json()
 
 
 def main() -> None:
@@ -167,7 +151,7 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
             ranks = pd.concat(temp).value_counts()
 
         with st.spinner("Loading spatial data..."):
-            hexes = gpd.read_file(StringIO(json.dumps(post("hexes", ranks.index.to_list())))).set_index("id")
+            hexes = fetch_gdf("hexes", ranks.index.to_list(), http_post=True).set_index("id")
             # TODO annoyingly comes back with a string index, can this be fixed?
             hexes.index = hexes.index.astype(int)
             # TODO also return in CRS we need for pydeck? Low priority - join/transform below takes ~20ms

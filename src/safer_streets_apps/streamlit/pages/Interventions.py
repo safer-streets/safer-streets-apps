@@ -1,0 +1,242 @@
+import os
+from typing import Any, get_args
+
+import geopandas as gpd
+import pandas as pd
+import pydeck as pdk
+import streamlit as st
+from dotenv import load_dotenv
+from itrx import Itr
+from safer_streets_core.api_helpers import fetch_gdf
+from safer_streets_core.utils import CATEGORIES, Force, data_dir, fix_force_name, latest_month, monthgen
+
+st.set_page_config(layout="wide", page_title="Crime Hotspots", page_icon="👮")
+st.logo("./assets/safer-streets-small.png", size="large")
+
+load_dotenv()
+
+FORCES = tuple(
+    fix_force_name(f)
+    for f in get_args(Force)
+    if f not in ["BTP", "Greater Manchester", "Northern Ireland", "Gwent", "City of London"]
+)
+
+# URL = "http://localhost:5000"
+URL = os.environ["SAFER_STREETS_API_URL"]
+N_MONTHS = 36
+
+HEX_AREA = 0.2**2 * 3**1.5 / 2
+
+REF_LAT = 52.7
+REF_LON = -2.0
+
+
+@st.cache_data
+def get_national_counts() -> pd.DataFrame:
+    return pd.read_parquet(data_dir() / f"national_hotspots_{latest_month()}.parquet")
+
+
+@st.cache_data
+def get_force_counts() -> pd.DataFrame:
+    return pd.read_parquet(data_dir() / f"force_hotspots_{latest_month()}.parquet")
+
+
+@st.cache_data
+def simplified_pfa_boundaries() -> tuple[dict[str, Any], dict[str, Any]]:
+    force_boundaries = gpd.read_file(data_dir() / "Police_Force_Areas_December_2023_EW_BFE_2734900428741300179.zip")
+    # this should be significantly smaller than a hex (although its not used in a spatial join)
+    force_boundaries.geometry = force_boundaries.simplify(tolerance=50)
+    force_boundaries = force_boundaries.to_crs(epsg=4326)
+
+    return (
+        force_boundaries[force_boundaries.PFA23NM.isin(FORCES)].geometry.__geo_interface__,
+        force_boundaries[~force_boundaries.PFA23NM.isin(FORCES)].geometry.__geo_interface__,
+    )
+
+
+def main() -> None:
+    st.title("Crime Intervention Explorer")
+
+    st.warning(
+        "##### :construction: This page uses the experimental Safer Streets [geospatial data API]"
+        "(https://uol-a011-prd-uks-wkld025-asp1-api1-acdkeudzafe8dtc9.uksouth-01.azurewebsites.net/docs#/)"
+    )
+
+    st.markdown("## Highlighting how interventions might reduce crime in hotspots nationally")
+
+    with st.expander("More info..."):
+        st.markdown(
+            """
+The app uses [police.uk](https://data.police.uk) public crime data to determine hotspots (in 200m hex cells) for a given
+crime type over a certain historic period, then calculate how many crimes occur over a subsequent period in those
+hotspots (and thus may be deterred by any intervention imposed)
+
+Data is available for 40 of the 43 Police Forces in England and Wales.
+
+This app allows the exploration of how different timescales and other metrics affect the outcomes.
+
+The following parameters can be set:
+- crime type
+- lookback window (6, 12, 18 or 24 months)
+- look-forward window (1, 3, or 12 months)
+- reference month (the start of the look-forward period)
+- number of hotspots per Force (1, 2, or 5 nationally or 1, 2, 5, 20, or 50 per force)
+- constrain hotspots (i.e. the top N in each force, or the equivalent number or hotspots nationally)
+
+The zoomable map displays the hotspot hex cells in red alongside the PFA boundaries. Greyed out forces indicate
+incomplete or missing data.
+"""
+        )
+
+    st.sidebar.header("Interventions")
+
+    months = Itr(monthgen(latest_month(), backwards=True)).take(N_MONTHS).rev().map(str).collect()
+
+    print(months[-12::12])
+
+    crime_type = st.sidebar.selectbox("Crime type", CATEGORIES, index=0)
+
+    lookback = st.sidebar.select_slider(
+        "Lookback window (months)",
+        options=[6, 12, 18, 24],
+        value=6,
+        help="Number of months of data to aggregate when determining hotspots",
+    )
+
+    lookforward = st.sidebar.select_slider(
+        "Look forward window (months)",
+        options=[1, 3, 12],
+        value=1,
+        help="Number of months of data to look forward when determining how well hotspots predict future crimes",
+    )
+
+    if lookforward != 12:
+        ref_date = st.sidebar.select_slider(
+            "Reference date", options=months[-12::lookforward], help="Start of the look-forward period"
+        )
+    else:
+        ref_date = months[-12]
+        st.sidebar.markdown(f"Reference date: {ref_date}")
+
+    constrain = st.sidebar.checkbox("Constrain hotspots to each force")
+
+    hotspots = st.sidebar.select_slider(
+        "Number of hotspots per force",
+        options=[1, 2, 5, 20, 50] if constrain else [1, 2, 5],
+        value=1,
+        help="Number of months to step when determining window",
+    )
+
+    try:
+        with st.spinner("Loading crime data..."):
+            count_data = (get_force_counts() if constrain else get_national_counts()).loc[
+                (lookback, ref_date, lookforward, hotspots, crime_type)
+            ]
+
+        hexes = fetch_gdf(
+            "hexes", count_data.index.get_level_values("spatial_unit").tolist(), http_post=True
+        ).set_index("id")
+        # TODO annoyingly comes back with a string index, can this be fixed?
+        hexes.index = hexes.index.astype(int)
+        hexes = hexes.to_crs(epsg=4326)
+
+        active_pfa_boundaries, missing_pfa_boundaries = simplified_pfa_boundaries()
+
+        # render map
+        view_state = pdk.ViewState(
+            latitude=REF_LAT,
+            longitude=REF_LON,
+            zoom=6,
+            pitch=22,
+        )
+
+        boundary_layer = pdk.Layer(
+            "GeoJsonLayer",
+            active_pfa_boundaries,
+            opacity=0.5,
+            stroked=True,
+            filled=False,
+            extruded=False,
+            pickable=True,
+            line_width_min_pixels=1,
+            get_line_color=[64, 64, 192, 128],
+        )
+
+        missing_layer = pdk.Layer(
+            "GeoJsonLayer",
+            missing_pfa_boundaries,
+            opacity=0.1,
+            stroked=True,
+            filled=True,
+            extruded=False,
+            pickable=True,
+            line_width_min_pixels=1,
+            # get_line_color=[64, 64, 192, 128],
+            fill_color=[192, 192, 192, 32],
+        )
+
+        hotspot_layer = (
+            pdk.Layer(
+                "GeoJsonLayer",
+                hexes.__geo_interface__,
+                stroked=True,
+                filled=True,
+                wireframe=True,
+                # get_fill_color="[192, 0, 0, properties['Frequency (%)']]",  # [255, 0, 0, 160],
+                get_fill_color=[192, 0, 0, 0x80],
+                get_line_color=[0x80, 0x80, 0x80, 0x80],
+                line_width_min_pixels=2,
+                pickable=True,
+            ),
+        )
+
+        # tooltip = {"html": f"Cell {{id}}<br/>Hotspot {{Frequency (%)}}% of the time ({{count}}/{n_obs})"}
+
+        st.pydeck_chart(
+            pdk.Deck(
+                map_style=st.context.theme.type,
+                layers=[boundary_layer, missing_layer, hotspot_layer],
+                initial_view_state=view_state,
+                # tooltip=tooltip,
+            ),
+            height=880,
+        )
+
+        with st.expander("Raw data"):
+            st.dataframe(count_data)
+
+    #     st.markdown(f"""
+    #         - **{window}-month lookback at {update}-month intervals ({n_obs} observations)**
+    #         - **{prediction_window}-month prediction window ({sum(~props["Proportion predicted by hotspots"].isna())} predictions)**
+    #         - **{coverage}% coverage corresponds to {n_hotspots} hex cells ({HEX_AREA * n_hotspots:.1f}km²)**
+    #         - **{len(hexes)} cells ({HEX_AREA * len(hexes):.1f}km²) feature at least once as hotspots. (Total PFA area
+    #         is {pfa_geodata["properties"]["area"]:.1f}km²)**
+    #     """)
+
+    #     st.markdown(
+    #         f"#### Time variation of percentage of crimes captured and predicted within the {coverage:.1f}% hotspot coverage:"
+    #     )
+
+    #     # this is potentially misleading as the lookback and prediction windows are not necessarily the same size
+    #     # props["Proportion predicted by hotspots"] = props["Proportion predicted by hotspots"].shift()
+
+    #     st.bar_chart(
+    #         props,
+    #         height=400,
+    #         x="Time slice",
+    #         y=["Proportion in hotspots", "Proportion predicted by hotspots"],
+    #         x_label="Time window",
+    #         stack="layered",
+    #         color=[DEFAULT_COLOUR, "#C00000"],
+    #         y_label="Percentage of crime captured",
+    #     )
+    #     with st.expander("View hotspot capture data"):
+    #         st.dataframe(props.set_index("Time slice", drop=True).style.format("{:.1f}%"))
+
+    except Exception as e:
+        st.error(e)
+        raise
+
+
+if __name__ == "__main__":
+    main()

@@ -11,4 +11,6 @@ cache/
 output/
 
 uv.lock
-data*/
+
+chroma_store/
+local_data/
