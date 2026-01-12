@@ -8,7 +8,7 @@ import streamlit as st
 from dotenv import load_dotenv
 from itrx import Itr
 from safer_streets_core.api_helpers import fetch_gdf
-from safer_streets_core.utils import CATEGORIES, Force, data_dir, fix_force_name, latest_month, monthgen
+from safer_streets_core.utils import CATEGORIES, Force, Month, data_dir, fix_force_name, latest_month, monthgen
 
 st.set_page_config(layout="wide", page_title="Crime Hotspots", page_icon="👮")
 st.logo("./assets/safer-streets-small.png", size="large")
@@ -16,16 +16,17 @@ st.logo("./assets/safer-streets-small.png", size="large")
 load_dotenv()
 
 FORCES = tuple(
-    fix_force_name(f)
+    fix_force_name(f)  # name only used to query boundary
     for f in get_args(Force)
     if f not in ["BTP", "Greater Manchester", "Northern Ireland", "Gwent", "City of London"]
 )
 
-# URL = "http://localhost:5000"
+# URL = "http://localhost:5000"  # note this won't resolve the host's loopback without running with --network=host
 URL = os.environ["SAFER_STREETS_API_URL"]
 N_MONTHS = 36
 
 HEX_AREA = 0.2**2 * 3**1.5 / 2
+EW_AREA = 151_047.0  # according to wikipedia
 
 REF_LAT = 52.7
 REF_LON = -2.0
@@ -92,8 +93,6 @@ incomplete or missing data.
 
     months = Itr(monthgen(latest_month(), backwards=True)).take(N_MONTHS).rev().map(str).collect()
 
-    print(months[-12::12])
-
     crime_type = st.sidebar.selectbox("Crime type", CATEGORIES, index=0)
 
     lookback = st.sidebar.select_slider(
@@ -106,7 +105,7 @@ incomplete or missing data.
     lookforward = st.sidebar.select_slider(
         "Look forward window (months)",
         options=[1, 3, 12],
-        value=1,
+        value=3,
         help="Number of months of data to look forward when determining how well hotspots predict future crimes",
     )
 
@@ -202,36 +201,20 @@ incomplete or missing data.
             height=880,
         )
 
-        with st.expander("Raw data"):
-            st.dataframe(count_data)
+        crime_coverage = (count_data.lookforward_total / count_data.lf_national_total).sum()
+        ref_date = Month.parse_str(ref_date)
+        hotspot_area = HEX_AREA * hotspots * len(FORCES)
+        area_coverage = hotspot_area / EW_AREA
 
-    #     st.markdown(f"""
-    #         - **{window}-month lookback at {update}-month intervals ({n_obs} observations)**
-    #         - **{prediction_window}-month prediction window ({sum(~props["Proportion predicted by hotspots"].isna())} predictions)**
-    #         - **{coverage}% coverage corresponds to {n_hotspots} hex cells ({HEX_AREA * n_hotspots:.1f}km²)**
-    #         - **{len(hexes)} cells ({HEX_AREA * len(hexes):.1f}km²) feature at least once as hotspots. (Total PFA area
-    #         is {pfa_geodata["properties"]["area"]:.1f}km²)**
-    #     """)
+        st.markdown(f"""
+            - **Hotspots for {crime_type} determined using data from {ref_date - lookback} to {ref_date - 1} inclusive**
+            - **Crimes occurring in hotspots counted from {ref_date} to {ref_date + lookforward - 1} inclusive**
+            - **{hotspots * len(FORCES)} hex cells ({hotspot_area:.1f}km²) capture {crime_coverage:.3%} of crimes in
+            {area_coverage:.3%} of total land area**
+        """)
 
-    #     st.markdown(
-    #         f"#### Time variation of percentage of crimes captured and predicted within the {coverage:.1f}% hotspot coverage:"
-    #     )
-
-    #     # this is potentially misleading as the lookback and prediction windows are not necessarily the same size
-    #     # props["Proportion predicted by hotspots"] = props["Proportion predicted by hotspots"].shift()
-
-    #     st.bar_chart(
-    #         props,
-    #         height=400,
-    #         x="Time slice",
-    #         y=["Proportion in hotspots", "Proportion predicted by hotspots"],
-    #         x_label="Time window",
-    #         stack="layered",
-    #         color=[DEFAULT_COLOUR, "#C00000"],
-    #         y_label="Percentage of crime captured",
-    #     )
-    #     with st.expander("View hotspot capture data"):
-    #         st.dataframe(props.set_index("Time slice", drop=True).style.format("{:.1f}%"))
+        with st.expander("Hotspot counts by force"):
+            st.dataframe(count_data.index.get_level_values("Force").value_counts().sort_values(ascending=False))
 
     except Exception as e:
         st.error(e)
