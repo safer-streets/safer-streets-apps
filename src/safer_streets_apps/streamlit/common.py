@@ -1,8 +1,10 @@
+from datetime import date
 from typing import Any
 
 import geopandas as gpd
 import pandas as pd
 import streamlit as st
+from dateutil.relativedelta import relativedelta
 from itrx import Itr
 from safer_streets_core.spatial import (
     SpatialUnit,
@@ -11,7 +13,7 @@ from safer_streets_core.spatial import (
     load_population_data,
     map_to_spatial_unit,
 )
-from safer_streets_core.utils import Force, get_monthly_crime_counts, latest_month, load_crime_data, monthgen
+from safer_streets_core.utils import Force, Month, get_monthly_crime_counts, latest_month, load_crime_data, monthgen
 
 LATEST_DATE = latest_month()
 all_months = Itr(monthgen(LATEST_DATE, backwards=True)).take(36).rev().collect()
@@ -70,3 +72,9 @@ def get_ethnicity(raw_population: gpd.GeoDataFrame | None, features: gpd.GeoData
     ).reindex(features.index, fill_value=0)
     ethnicity.columns = ethnicity.columns.astype(str).str[:5]
     return ethnicity
+
+
+def date_range(start_month: Month, n_months: int) -> tuple[date, date]:
+    start_date = date(start_month.year, start_month.month, 1)
+    end_date = start_date + relativedelta(months=n_months, days=-1)
+    return start_date, end_date

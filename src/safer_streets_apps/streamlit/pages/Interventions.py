@@ -10,6 +10,8 @@ from itrx import Itr
 from safer_streets_core.api_helpers import fetch_gdf
 from safer_streets_core.utils import CATEGORIES, Force, Month, data_dir, fix_force_name, latest_month, monthgen
 
+from safer_streets_apps.streamlit.common import date_range
+
 st.set_page_config(layout="wide", page_title="Crime Hotspots", page_icon="👮")
 st.logo("./assets/safer-streets-small.png", size="large")
 
@@ -55,7 +57,21 @@ def simplified_pfa_boundaries() -> tuple[dict[str, Any], dict[str, Any]]:
     )
 
 
+MONTHS = Itr(monthgen(latest_month(), backwards=True)).take(N_MONTHS).rev().map(str).collect()
+
+
 def main() -> None:
+    if "lookback" not in st.session_state:
+        st.session_state.lookback = 6
+    if "lookforward" not in st.session_state:
+        st.session_state.lookforward = 3
+    if "ref_date" not in st.session_state:
+        st.session_state.ref_date = MONTHS[-12]
+    if "constrain" not in st.session_state:
+        st.session_state.constrain = False
+    if "hotspots" not in st.session_state:
+        st.session_state.hotspots = 1
+
     st.title("Crime Intervention Explorer")
 
     st.warning(
@@ -91,45 +107,62 @@ incomplete or missing data.
 
     st.sidebar.header("Interventions")
 
-    months = Itr(monthgen(latest_month(), backwards=True)).take(N_MONTHS).rev().map(str).collect()
+    crime_type = st.sidebar.selectbox("Crime type", CATEGORIES, index=0)  # st.session_state.crime_type_index)
 
-    crime_type = st.sidebar.selectbox("Crime type", CATEGORIES, index=0)
-
-    lookback = st.sidebar.select_slider(
+    st.session_state.lookback = st.sidebar.select_slider(
         "Lookback window (months)",
         options=[6, 12, 18, 24],
-        value=6,
+        value=st.session_state.lookback,
         help="Number of months of data to aggregate when determining hotspots",
     )
 
-    lookforward = st.sidebar.select_slider(
+    st.session_state.lookforward = st.sidebar.select_slider(
         "Look forward window (months)",
         options=[1, 3, 12],
-        value=3,
+        value=st.session_state.lookforward,
         help="Number of months of data to look forward when determining how well hotspots predict future crimes",
     )
 
-    if lookforward != 12:
-        ref_date = st.sidebar.select_slider(
-            "Reference date", options=months[-12::lookforward], help="Start of the look-forward period"
+    if st.session_state.lookforward != 12:
+        st.session_state.ref_date = st.sidebar.select_slider(
+            "Reference date",
+            options=MONTHS[-12 :: st.session_state.lookforward],
+            value=st.session_state.ref_date,
+            help="Start of the look-forward period",
         )
     else:
-        ref_date = months[-12]
-        st.sidebar.markdown(f"Reference date: {ref_date}")
+        st.session_state.ref_date = MONTHS[-12]
+        st.sidebar.markdown(f"Reference date: {st.session_state.ref_date}")
 
-    constrain = st.sidebar.checkbox("Constrain hotspots to each force")
+    # st.session_state.ref_date = st.sidebar.select_slider(
+    #     "Reference date",
+    #     options=months[-12 :: st.session_state.lookforward],
+    #     value=st.session_state.ref_date,
+    #     disabled=st.session_state.lookforward == 12,
+    #     help="Start of the look-forward period",
+    # )
 
-    hotspots = st.sidebar.select_slider(
+    st.session_state.constrain = st.sidebar.checkbox(
+        "Constrain hotspots to each force", value=st.session_state.constrain
+    )
+
+    st.session_state.hotspots = st.sidebar.select_slider(
         "Number of hotspots per force",
-        options=[1, 2, 5, 20, 50] if constrain else [1, 2, 5],
-        value=1,
+        options=[1, 2, 5, 20, 50] if st.session_state.constrain else [1, 2, 5],
+        value=min(5, st.session_state.hotspots),
         help="Number of months to step when determining window",
     )
 
     try:
         with st.spinner("Loading crime data..."):
-            count_data = (get_force_counts() if constrain else get_national_counts()).loc[
-                (lookback, ref_date, lookforward, hotspots, crime_type)
+            count_data = (get_force_counts() if st.session_state.constrain else get_national_counts()).loc[
+                (
+                    st.session_state.lookback,
+                    st.session_state.ref_date,
+                    st.session_state.lookforward,
+                    st.session_state.hotspots,
+                    crime_type,
+                )
             ]
 
         hexes = fetch_gdf(
@@ -202,14 +235,18 @@ incomplete or missing data.
         )
 
         crime_coverage = (count_data.lookforward_total / count_data.lf_national_total).sum()
-        ref_date = Month.parse_str(ref_date)
-        hotspot_area = HEX_AREA * hotspots * len(FORCES)
+        ref_date = Month.parse_str(st.session_state.ref_date)
+        hotspot_area = HEX_AREA * st.session_state.hotspots * len(FORCES)
         area_coverage = hotspot_area / EW_AREA
 
+        lb_start, lb_end = date_range(ref_date - st.session_state.lookback, st.session_state.lookback)
+        lf_start, lf_end = date_range(ref_date, st.session_state.lookforward)
+
         st.markdown(f"""
-            - **Hotspots for {crime_type} determined using data from {ref_date - lookback} to {ref_date - 1} inclusive**
-            - **Crimes occurring in hotspots counted from {ref_date} to {ref_date + lookforward - 1} inclusive**
-            - **{hotspots * len(FORCES)} hex cells ({hotspot_area:.1f}km²) capture {crime_coverage:.3%} of crimes in
+            - **Hotspots for {crime_type} determined using data from {lb_start} to {lb_end} inclusive**
+            - **Crimes occurring in hotspots counted from {lf_start} to {lf_end} inclusive**
+            - **{st.session_state.hotspots * len(FORCES)} hex cells ({hotspot_area:.1f}km²) capture {crime_coverage:.3%} of crimes
+                ({count_data.lookforward_total.sum()} offences) in
             {area_coverage:.3%} of total land area**
         """)
 
