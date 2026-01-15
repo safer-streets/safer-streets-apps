@@ -14,9 +14,11 @@ from safer_streets_core.utils import (
 from safer_streets_apps.streamlit.common import (
     cache_crime_data,
     cache_demographic_data,
+    date_range,
     geographies,
     get_counts_and_features,
     get_ethnicity,
+    latest_month,
 )
 
 
@@ -194,19 +196,23 @@ the hotspots - that is, the set of areas that capture the most crime for the tot
 
         layers = [boundary_layer, hotspots]
 
-        st.markdown(
-            f"## {category} in {force} PFA, {counts.columns[0]} to {counts.columns[-1]}\n"
-            f"### Features in the top {area_threshold}km² - {lookback_window} month rolling window"
-        )
+        start, end = date_range(latest_month() - observation_period * 12 + 1, observation_period * 12)
+        st.markdown(f"""
+            ### {category} in {force} PFA
+            - **Crimes occurring from {start} to {end} inclusive**
+            - **Features in the top {area_threshold}km² over a {lookback_window} month rolling window**
+            """)
+
 
         tooltip = {
-            "html": f"Feature {{name}} population: {{population}}, annual crime rate {{crime_rate}}\nHotspot {{count}} times out of {max_hits} <br/>"
+            "html": f"Feature {{name}} population: {{population}}<br/>Annual crime rate {{crime_rate}}<br/>"
+            f"Hotspot {{count}} times out of {max_hits} <br/>"
             "Ethnicity breakdown (2021 census):<br/>" + "<br/>".join(f"{eth}: {{{eth}}}" for eth in ethnicity.columns)
         }
 
         st.pydeck_chart(
             pdk.Deck(map_style=st.context.theme.type, layers=layers, initial_view_state=view_state, tooltip=tooltip),
-            height=960,
+            height=800,
         )
 
         with st.expander("Hotspot Table"):

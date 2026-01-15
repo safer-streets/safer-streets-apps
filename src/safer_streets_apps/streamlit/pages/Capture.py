@@ -248,7 +248,7 @@ its crime and demographics (Hover on the force area boundary for average values.
 
         st.pydeck_chart(
             pdk.Deck(map_style=st.context.theme.type, layers=layers, initial_view_state=view_state, tooltip=tooltip),
-            height=960,
+            height=800,
         )
 
         with st.expander("Hotspot Table"):
