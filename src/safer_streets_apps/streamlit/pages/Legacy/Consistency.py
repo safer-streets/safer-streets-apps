@@ -9,6 +9,7 @@ from itrx import Itr
 from safer_streets_core.spatial import get_force_boundary, map_to_spatial_unit
 from safer_streets_core.utils import (
     CATEGORIES,
+    DEFAULT_FORCE,
     Force,
     calc_gini,
     get_monthly_crime_counts,
@@ -66,7 +67,7 @@ the set of areas capture the most crime, with red being the highest.
 
     st.sidebar.header("Consistency")
 
-    force = st.sidebar.selectbox("Force Area", get_args(Force), index=43)  # default="West Yorkshire"
+    force = st.sidebar.selectbox("Force Area", get_args(Force), index=DEFAULT_FORCE)  # default="West Yorkshire"
 
     category = st.sidebar.selectbox("Crime type", CATEGORIES, index=1)
 

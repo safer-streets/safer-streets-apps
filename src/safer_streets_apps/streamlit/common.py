@@ -13,10 +13,8 @@ from safer_streets_core.spatial import (
     load_population_data,
     map_to_spatial_unit,
 )
-from safer_streets_core.utils import Force, Month, get_monthly_crime_counts, latest_month, load_crime_data, monthgen
-
-LATEST_DATE = latest_month()
-all_months = Itr(monthgen(LATEST_DATE, backwards=True)).take(36).rev().collect()
+from safer_streets_core.utils import Force, Month, get_monthly_crime_counts, load_crime_data, monthgen
+from safer_streets_core.utils import latest_month as core_latest_month
 
 
 @st.cache_data
@@ -30,6 +28,18 @@ def cache_crime_data(force: Force, category: str) -> tuple[gpd.GeoDataFrame, gpd
 def cache_demographic_data(force: Force) -> gpd.GeoDataFrame:
     raw_population = load_population_data(force).to_crs(epsg=4326)
     return raw_population
+
+
+@st.cache_data
+def latest_month() -> Month:
+    """
+    This should ensure that if the crime data is updated, things won't immediately break
+    Restart the app to update this
+    """
+    return core_latest_month()
+
+
+all_months = Itr(monthgen(latest_month(), backwards=True)).take(36).rev().collect()
 
 
 geographies = {

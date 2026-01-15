@@ -11,6 +11,7 @@ from safer_streets_core.charts import make_radar_chart
 from safer_streets_core.spatial import get_demographics, get_force_boundary, load_population_data, map_to_spatial_unit
 from safer_streets_core.utils import (
     CATEGORIES,
+    DEFAULT_FORCE,
     Force,
     calc_gini,
     get_monthly_crime_counts,
@@ -78,7 +79,7 @@ over time. To view the animation, in the sidebar:
 
     st.sidebar.header("Capture")
 
-    force = st.sidebar.selectbox("Force Area", get_args(Force), index=43)  # default="West Yorkshire"
+    force = st.sidebar.selectbox("Force Area", get_args(Force), index=DEFAULT_FORCE)  # default="West Yorkshire"
 
     category = st.sidebar.selectbox("Crime type", CATEGORIES, index=1)
 

@@ -7,16 +7,18 @@ from dotenv import load_dotenv
 from itrx import Itr
 from safer_streets_core.api_helpers import fetch_df, fetch_gdf, get
 from safer_streets_core.charts import DEFAULT_COLOUR
-from safer_streets_core.utils import CrimeType, Force, latest_month, monthgen
+from safer_streets_core.utils import DEFAULT_FORCE, CrimeType, Force, monthgen
+
+from safer_streets_apps.streamlit.common import latest_month
 
 st.set_page_config(layout="wide", page_title="Crime Hotspots", page_icon="👮")
 st.logo("./assets/safer-streets-small.png", size="large")
 
 load_dotenv()
 
-# URL = "http://localhost:5000"
-# URL = os.environ["SAFER_STREETS_API_URL"]
-# HEADERS = {"x-api-key": os.getenv("SAFER_STREETS_API_KEY")}
+# override env
+# import os
+# os.environ["SAFER_STREETS_API_URL"] = "http://localhost:5000"
 N_MONTHS = 36
 
 HEX_AREA = 0.2**2 * 3**1.5 / 2
@@ -70,7 +72,9 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
 
     st.sidebar.header("Hotspots")
 
-    force = cast(Force, st.sidebar.selectbox("Force Area", get_args(Force), index=43))  # default="West Yorkshire"
+    force = cast(
+        Force, st.sidebar.selectbox("Force Area", get_args(Force), index=DEFAULT_FORCE)
+    )  # default="West Yorkshire"
 
     # _spatial_unit = st.sidebar.selectbox(
     #     "Spatial unit", ["Hex cell", "Output area"], help="Choose either 200m hex cell or census output area"

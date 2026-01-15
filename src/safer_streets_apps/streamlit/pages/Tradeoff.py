@@ -3,7 +3,7 @@ from typing import cast, get_args
 import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
-from safer_streets_core.utils import CATEGORIES, Force, data_dir
+from safer_streets_core.utils import CATEGORIES, DEFAULT_FORCE, Force, data_dir
 
 CONSISTENCY_MEASURES = ("RBO_7", "RBO_8", "RBO_9", "F1_10", "F1_20", "F1_50")
 CONCENTRATION_MEASURES = ("L_10", "L_20", "L_50", "Gini", "Modified Gini")
@@ -89,7 +89,9 @@ def main() -> None:  # noqa: C901
 
     st.sidebar.header("Parameters")
 
-    force = cast(Force, st.sidebar.selectbox("Force Area", get_args(Force), index=43))  # default="West Yorkshire"
+    force = cast(
+        Force, st.sidebar.selectbox("Force Area", get_args(Force), index=DEFAULT_FORCE)
+    )  # default="West Yorkshire"
     category = st.sidebar.selectbox("Crime type", CATEGORIES, index=1)
     time_window = st.sidebar.select_slider("Aggregation window (months)", [1, 2, 3, 6, 12])
     fixed_axes = st.sidebar.checkbox(

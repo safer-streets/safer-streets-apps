@@ -6,6 +6,7 @@ import pydeck as pdk
 import streamlit as st
 from safer_streets_core.utils import (
     CATEGORIES,
+    DEFAULT_FORCE,
     Force,
     Month,
 )
@@ -54,7 +55,9 @@ the hotspots - that is, the set of areas that capture the most crime for the tot
 
     st.sidebar.header("Consistency")
 
-    force = cast(Force, st.sidebar.selectbox("Force Area", get_args(Force), index=43))  # default="West Yorkshire"
+    force = cast(
+        Force, st.sidebar.selectbox("Force Area", get_args(Force), index=DEFAULT_FORCE)
+    )  # default="West Yorkshire"
 
     category = st.sidebar.selectbox("Crime type", CATEGORIES, index=1)
 

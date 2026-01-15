@@ -8,9 +8,9 @@ import streamlit as st
 from dotenv import load_dotenv
 from itrx import Itr
 from safer_streets_core.api_helpers import fetch_gdf
-from safer_streets_core.utils import CATEGORIES, Force, Month, data_dir, fix_force_name, latest_month, monthgen
+from safer_streets_core.utils import CATEGORIES, Force, Month, data_dir, fix_force_name, monthgen
 
-from safer_streets_apps.streamlit.common import date_range
+from safer_streets_apps.streamlit.common import date_range, latest_month
 
 st.set_page_config(layout="wide", page_title="Crime Hotspots", page_icon="👮")
 st.logo("./assets/safer-streets-small.png", size="large")

@@ -7,6 +7,7 @@ from itrx import Itr
 from safer_streets_core.spatial import get_demographics, get_force_boundary, load_population_data, map_to_spatial_unit
 from safer_streets_core.utils import (
     CATEGORIES,
+    DEFAULT_FORCE,
     Force,
     get_monthly_crime_counts,
     latest_month,
@@ -81,7 +82,7 @@ that area, with red being the highest.
 
     st.sidebar.header("Demographics")
 
-    force = st.sidebar.selectbox("Force Area", get_args(Force), index=43)  # default="West Yorkshire"
+    force = st.sidebar.selectbox("Force Area", get_args(Force), index=DEFAULT_FORCE)  # default="West Yorkshire"
     category = st.sidebar.selectbox("Crime type", CATEGORIES, index=1)
     spatial_unit_name = st.sidebar.selectbox("Spatial Unit", geographies.keys(), index=0)
     elevation_scale = st.sidebar.slider(

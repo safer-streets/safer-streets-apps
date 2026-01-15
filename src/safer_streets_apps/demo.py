@@ -10,6 +10,7 @@ from itrx import Itr
 from safer_streets_core.spatial import get_force_boundary, map_to_spatial_unit
 from safer_streets_core.utils import (
     CATEGORIES,
+    DEFAULT_FORCE,
     Force,
     Month,
     calc_gini,
@@ -48,7 +49,7 @@ def main() -> None:
 
     cols = st.columns(2)
 
-    force = cols[0].selectbox("Force Area", get_args(Force), index=43)  # default="West Yorkshire"
+    force = cols[0].selectbox("Force Area", get_args(Force), index=DEFAULT_FORCE)  # default="West Yorkshire"
 
     category = cols[0].selectbox("Crime type", CATEGORIES, index=1)
 

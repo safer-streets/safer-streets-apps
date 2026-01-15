@@ -6,6 +6,7 @@ import pydeck as pdk
 import streamlit as st
 from safer_streets_core.utils import (
     CATEGORIES,
+    DEFAULT_FORCE,
     Force,
     Month,
 )
@@ -14,6 +15,7 @@ from safer_streets_apps.streamlit.common import (
     all_months,
     cache_crime_data,
     cache_demographic_data,
+    date_range,
     geographies,
     get_counts_and_features,
     get_ethnicity,
@@ -60,7 +62,9 @@ its crime and demographics (Hover on the force area boundary for average values.
 
     st.sidebar.header("Capture")
 
-    force = cast(Force, st.sidebar.selectbox("Force Area", get_args(Force), index=43))  # default="West Yorkshire"
+    force = cast(
+        Force, st.sidebar.selectbox("Force Area", get_args(Force), index=DEFAULT_FORCE)
+    )  # default="West Yorkshire"
 
     category = st.sidebar.selectbox("Crime type", CATEGORIES, index=1)
 
@@ -225,10 +229,17 @@ its crime and demographics (Hover on the force area boundary for average values.
                 ),
             )
 
-        st.markdown(
-            f"## {category} in {force} PFA, {display_name(month)}\n"
-            f"### Features in the top {area_threshold}km² - {lookback_window} month rolling window"
-        )
+        # st.dataframe(captured_features)
+
+        start, end = date_range(month - lookback_window + 1, lookback_window)
+        st.markdown(f"""
+            ### {category} in {force} PFA
+            - **Crimes occurring from {start} to {end} inclusive**
+            - **{len(captured_features)} features ({spatial_unit_name}) covering
+            {captured_features.area_km2.sum():.1f}km² meet the required coverage of {area_threshold}km²**
+            - **{captured_features.n_crimes.sum()} crimes
+            ({captured_features.n_crimes.sum() / ordered_counts.n_crimes.sum():.1%}) are captured in these features**
+            """)
 
         tooltip = {
             "html": "Feature {name} population: {population}, crimes: {n_crimes}<br/>"

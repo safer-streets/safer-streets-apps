@@ -12,7 +12,7 @@ from safer_streets_core.measures import (
     rank_biased_overlap,
     spearman_rank_correlation,
 )
-from safer_streets_core.utils import CATEGORIES, Force, Month
+from safer_streets_core.utils import CATEGORIES, DEFAULT_FORCE, Force, Month
 from sklearn.metrics import f1_score
 
 from safer_streets_apps.streamlit.common import (
@@ -66,7 +66,9 @@ rank-biased overlap, Spearman rank correlation
 
     st.sidebar.header("Measures")
 
-    force = cast(Force, st.sidebar.selectbox("Force Area", get_args(Force), index=43))  # default="West Yorkshire"
+    force = cast(
+        Force, st.sidebar.selectbox("Force Area", get_args(Force), index=DEFAULT_FORCE)
+    )  # default="West Yorkshire"
 
     category = st.sidebar.selectbox("Crime type", CATEGORIES, index=1)
 
