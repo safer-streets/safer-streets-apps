@@ -52,8 +52,8 @@ def simplified_pfa_boundaries() -> tuple[dict[str, Any], dict[str, Any]]:
     force_boundaries = force_boundaries.to_crs(epsg=4326)
 
     return (
-        force_boundaries[force_boundaries.PFA23NM.isin(FORCES)].geometry.__geo_interface__,
-        force_boundaries[~force_boundaries.PFA23NM.isin(FORCES)].geometry.__geo_interface__,
+        force_boundaries[force_boundaries.PFA23NM.isin(FORCES)][["PFA23NM", "geometry"]].__geo_interface__,
+        force_boundaries[~force_boundaries.PFA23NM.isin(FORCES)][["PFA23NM", "geometry"]].__geo_interface__,
     )
 
 
@@ -134,23 +134,15 @@ incomplete or missing data.
         st.session_state.ref_date = MONTHS[-12]
         st.sidebar.markdown(f"Reference date: {st.session_state.ref_date}")
 
-    # st.session_state.ref_date = st.sidebar.select_slider(
-    #     "Reference date",
-    #     options=months[-12 :: st.session_state.lookforward],
-    #     value=st.session_state.ref_date,
-    #     disabled=st.session_state.lookforward == 12,
-    #     help="Start of the look-forward period",
-    # )
-
     st.session_state.constrain = st.sidebar.checkbox(
         "Constrain hotspots to each force", value=st.session_state.constrain
     )
 
     st.session_state.hotspots = st.sidebar.select_slider(
         "Number of hotspots per force",
-        options=[1, 2, 5, 20, 50] if st.session_state.constrain else [1, 2, 5],
-        value=min(5, st.session_state.hotspots),
-        help="Number of months to step when determining window",
+        options=[1, 2, 5, 20, 50],
+        value=st.session_state.hotspots,
+        help="Total hotspots will be this number multiplied by the number of forces",
     )
 
     try:
@@ -185,7 +177,7 @@ incomplete or missing data.
         boundary_layer = pdk.Layer(
             "GeoJsonLayer",
             active_pfa_boundaries,
-            opacity=0.5,
+            opacity=0.7,
             stroked=True,
             filled=False,
             extruded=False,
@@ -203,8 +195,7 @@ incomplete or missing data.
             extruded=False,
             pickable=True,
             line_width_min_pixels=1,
-            # get_line_color=[64, 64, 192, 128],
-            fill_color=[192, 192, 192, 32],
+            # fill_color=[192, 192, 192, 32],
         )
 
         hotspot_layer = (
@@ -218,18 +209,18 @@ incomplete or missing data.
                 get_fill_color=[192, 0, 0, 0x80],
                 get_line_color=[0x80, 0x80, 0x80, 0x80],
                 line_width_min_pixels=2,
-                pickable=True,
+                # pickable=True,
             ),
         )
 
-        # tooltip = {"html": f"Cell {{id}}<br/>Hotspot {{Frequency (%)}}% of the time ({{count}}/{n_obs})"}
+        tooltip = {"html": "{PFA23NM}"}
 
         st.pydeck_chart(
             pdk.Deck(
                 map_style=st.context.theme.type,
                 layers=[boundary_layer, missing_layer, hotspot_layer],
                 initial_view_state=view_state,
-                # tooltip=tooltip,
+                tooltip=tooltip,
             ),
             height=880,
         )

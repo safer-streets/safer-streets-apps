@@ -203,7 +203,6 @@ the hotspots - that is, the set of areas that capture the most crime for the tot
             - **Features in the top {area_threshold}km² over a {lookback_window} month rolling window**
             """)
 
-
         tooltip = {
             "html": f"Feature {{name}} population: {{population}}<br/>Annual crime rate {{crime_rate}}<br/>"
             f"Hotspot {{count}} times out of {max_hits} <br/>"
