@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from itrx import Itr
 from safer_streets_core.api_helpers import fetch_df, fetch_gdf, get
 from safer_streets_core.charts import DEFAULT_COLOUR
-from safer_streets_core.utils import DEFAULT_FORCE, CrimeType, Force, monthgen
+from safer_streets_core.utils import DEFAULT_FORCE, CrimeType, Force, data_dir, monthgen
 
 from safer_streets_apps.streamlit.common import latest_month
 
@@ -37,6 +37,21 @@ def get_counts(force: Force, crime_type: CrimeType) -> pd.DataFrame:
     )
     counts.columns = counts.columns.droplevel(0)
     return counts
+
+
+@st.cache_data
+def get_oac() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    hex_oa_mapping = pd.read_parquet(data_dir() / "hex-oa-mapping.parquet")
+    oac_desc = pd.read_csv(data_dir() / "classification_codes_and_names-1.csv").set_index("Classification Code")[
+        "Classification Name"
+    ]
+    oac_actual = (
+        pd.read_csv(data_dir() / "UK_OAC_Final.csv")
+        .set_index("Geography_Code")
+        .rename(columns={"Supergroup": "supergroup_code", "Group": "group_code", "Subgroup": "subgroup_code"})
+    )
+    oac_actual.supergroup_code = oac_actual.supergroup_code.astype(str)
+    return hex_oa_mapping, oac_actual, oac_desc
 
 
 def main() -> None:
@@ -129,6 +144,8 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
                 .chain([None] * prediction_window)
             )
 
+            hex_oa_mapping, oac_codes, oac_desc = get_oac()
+
             pfa_geodata = get("pfa_geodata", params={"force": force})
             hotspot_area = coverage * pfa_geodata["properties"]["area"] / 100
             n_hotspots = max(1, int(hotspot_area / HEX_AREA))
@@ -152,7 +169,12 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
                     )
                 temp.append(ranked.head(n_hotspots).reset_index().spatial_unit)
 
-            ranks = pd.concat(temp).value_counts()
+            # map hexes to OAs and add OA classifications
+            ranks = pd.concat(temp).value_counts().to_frame().join(hex_oa_mapping)
+            ranks = ranks.merge(oac_codes, left_on="OA21CD", right_index=True)
+            ranks = ranks.merge(oac_desc.rename("Supergroup"), left_on="supergroup_code", right_index=True)
+            ranks = ranks.merge(oac_desc.rename("Group"), left_on="group_code", right_index=True)
+            ranks = ranks.merge(oac_desc.rename("Subgroup"), left_on="subgroup_code", right_index=True)
 
         with st.spinner("Loading spatial data..."):
             hexes = fetch_gdf("hexes", ranks.index.to_list(), http_post=True).set_index("id")
@@ -182,7 +204,7 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
             stroked=True,
             filled=False,
             extruded=False,
-            pickable=True,
+            # pickable=True,
             line_width_min_pixels=2,
             get_line_color=[64, 64, 192, 255],
         )
@@ -201,7 +223,11 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
             ),
         )
 
-        tooltip = {"html": f"Cell {{id}}<br/>Hotspot {{Frequency (%)}}% of the time ({{count}}/{n_obs})"}
+        tooltip = {
+            "html": f"Cell {{id}}<br/>Hotspot {{Frequency (%)}}% of the time ({{count}}/{n_obs})<br/>"
+            "{OA21CD} classification:<br/>"
+            "{Supergroup}<br/>{Group}<br/>{Subgroup}"
+        }
 
         st.pydeck_chart(
             pdk.Deck(
@@ -221,11 +247,16 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
             is {pfa_geodata["properties"]["area"]:.1f}km²)**
         """)
 
+        with st.expander("Output Area classfication rankings"):
+            levels = ["Supergroup", "Group", "Subgroup"]
+            level = st.select_slider("OAC Level", levels, value="Group")
+            st.dataframe(ranks[levels[: levels.index(level) + 1]].value_counts().sort_values(ascending=False))
+
         st.markdown(
             f"#### Time variation of percentage of crimes captured and predicted within the {coverage:.1f}% hotspot coverage:"
         )
 
-        # this is potentially misleading as the lookback and prediction windows are not necessarily the same size
+        # this is potentially slightly misleading as the lookback and prediction windows are not necessarily the same size
         # props["Proportion predicted by hotspots"] = props["Proportion predicted by hotspots"].shift()
 
         st.bar_chart(
