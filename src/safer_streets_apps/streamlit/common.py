@@ -13,7 +13,7 @@ from safer_streets_core.spatial import (
     load_population_data,
     map_to_spatial_unit,
 )
-from safer_streets_core.utils import Force, Month, get_monthly_crime_counts, load_crime_data, monthgen
+from safer_streets_core.utils import Force, Month, data_dir, get_monthly_crime_counts, load_crime_data, monthgen
 from safer_streets_core.utils import latest_month as core_latest_month
 
 
@@ -37,6 +37,21 @@ def latest_month() -> Month:
     Restart the app to update this
     """
     return core_latest_month()
+
+
+@st.cache_data
+def get_oac() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    hex_oa_mapping = pd.read_parquet(data_dir() / "hex-oa-mapping.parquet")
+    oac_desc = pd.read_csv(data_dir() / "classification_codes_and_names-1.csv").set_index("Classification Code")[
+        "Classification Name"
+    ]
+    oac_actual = (
+        pd.read_csv(data_dir() / "UK_OAC_Final.csv")
+        .set_index("Geography_Code")
+        .rename(columns={"Supergroup": "supergroup_code", "Group": "group_code", "Subgroup": "subgroup_code"})
+    )
+    oac_actual.supergroup_code = oac_actual.supergroup_code.astype(str)
+    return hex_oa_mapping, oac_actual, oac_desc
 
 
 all_months = Itr(monthgen(latest_month(), backwards=True)).take(36).rev().collect()

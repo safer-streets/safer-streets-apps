@@ -10,7 +10,7 @@ from itrx import Itr
 from safer_streets_core.api_helpers import fetch_gdf
 from safer_streets_core.utils import CATEGORIES, Force, Month, data_dir, fix_force_name, monthgen
 
-from safer_streets_apps.streamlit.common import date_range, latest_month
+from safer_streets_apps.streamlit.common import date_range, get_oac, latest_month
 
 st.set_page_config(layout="wide", page_title="Crime Hotspots", page_icon="👮")
 st.logo("./assets/safer-streets-small.png", size="large")
@@ -20,7 +20,7 @@ load_dotenv()
 FORCES = tuple(
     fix_force_name(f)  # name only used to query boundary
     for f in get_args(Force)
-    if f not in ["BTP", "Greater Manchester", "Northern Ireland", "Gwent", "City of London"]
+    if f not in ["BTP", "Greater Manchester", "Northern Ireland", "Gwent"]
 )
 
 # URL = "http://localhost:5000"  # note this won't resolve the host's loopback without running with --network=host
@@ -88,7 +88,7 @@ The app uses [police.uk](https://data.police.uk) public crime data to determine 
 crime type over a certain historic period, then calculate how many crimes occur over a subsequent period in those
 hotspots (and thus may be deterred by any intervention imposed)
 
-Data is available for 40 of the 43 Police Forces in England and Wales.
+Data is available for 41 of the 43 Police Forces in England and Wales.
 
 This app allows the exploration of how different timescales and other metrics affect the outcomes.
 
@@ -157,12 +157,20 @@ incomplete or missing data.
                 )
             ]
 
+            hex_oa_mapping, oac_codes, oac_desc = get_oac()
+
         hexes = fetch_gdf(
             "hexes", count_data.index.get_level_values("spatial_unit").tolist(), http_post=True
         ).set_index("id")
         # TODO annoyingly comes back with a string index, can this be fixed?
         hexes.index = hexes.index.astype(int)
         hexes = hexes.to_crs(epsg=4326)
+
+        hexes = hexes.join(hex_oa_mapping)
+        hexes = hexes.merge(oac_codes, left_on="OA21CD", right_index=True)
+        hexes = hexes.merge(oac_desc.rename("Supergroup"), left_on="supergroup_code", right_index=True)
+        hexes = hexes.merge(oac_desc.rename("Group"), left_on="group_code", right_index=True)
+        hexes = hexes.merge(oac_desc.rename("Subgroup"), left_on="subgroup_code", right_index=True)
 
         active_pfa_boundaries, missing_pfa_boundaries = simplified_pfa_boundaries()
 
@@ -177,11 +185,11 @@ incomplete or missing data.
         boundary_layer = pdk.Layer(
             "GeoJsonLayer",
             active_pfa_boundaries,
-            opacity=0.7,
+            opacity=0.5,
             stroked=True,
             filled=False,
             extruded=False,
-            pickable=True,
+            pickable=False,
             line_width_min_pixels=1,
             get_line_color=[64, 64, 192, 128],
         )
@@ -193,7 +201,7 @@ incomplete or missing data.
             stroked=True,
             filled=True,
             extruded=False,
-            pickable=True,
+            pickable=False,
             line_width_min_pixels=1,
             # fill_color=[192, 192, 192, 32],
         )
@@ -209,11 +217,11 @@ incomplete or missing data.
                 get_fill_color=[192, 0, 0, 0x80],
                 get_line_color=[0x80, 0x80, 0x80, 0x80],
                 line_width_min_pixels=2,
-                # pickable=True,
+                pickable=True,
             ),
         )
 
-        tooltip = {"html": "{PFA23NM}"}
+        tooltip = {"html": "Intersect {OA21CD} classification:<br/>{Supergroup}<br/>{Group}<br/>{Subgroup}"}
 
         st.pydeck_chart(
             pdk.Deck(
@@ -243,6 +251,11 @@ incomplete or missing data.
 
         with st.expander("Hotspot counts by force"):
             st.dataframe(count_data.index.get_level_values("Force").value_counts().sort_values(ascending=False))
+
+        with st.expander("Hotspot counts by by Output Area classfication"):
+            levels = ["Supergroup", "Group", "Subgroup"]
+            level = st.select_slider("OAC Level", levels, value="Group")
+            st.dataframe(hexes[levels[: levels.index(level) + 1]].value_counts().sort_values(ascending=False))
 
     except Exception as e:
         st.error(e)

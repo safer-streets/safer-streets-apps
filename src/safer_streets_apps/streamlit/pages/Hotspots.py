@@ -7,9 +7,9 @@ from dotenv import load_dotenv
 from itrx import Itr
 from safer_streets_core.api_helpers import fetch_df, fetch_gdf, get
 from safer_streets_core.charts import DEFAULT_COLOUR
-from safer_streets_core.utils import DEFAULT_FORCE, CrimeType, Force, data_dir, monthgen
+from safer_streets_core.utils import DEFAULT_FORCE, CrimeType, Force, monthgen
 
-from safer_streets_apps.streamlit.common import latest_month
+from safer_streets_apps.streamlit.common import get_oac, latest_month
 
 st.set_page_config(layout="wide", page_title="Crime Hotspots", page_icon="👮")
 st.logo("./assets/safer-streets-small.png", size="large")
@@ -37,21 +37,6 @@ def get_counts(force: Force, crime_type: CrimeType) -> pd.DataFrame:
     )
     counts.columns = counts.columns.droplevel(0)
     return counts
-
-
-@st.cache_data
-def get_oac() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    hex_oa_mapping = pd.read_parquet(data_dir() / "hex-oa-mapping.parquet")
-    oac_desc = pd.read_csv(data_dir() / "classification_codes_and_names-1.csv").set_index("Classification Code")[
-        "Classification Name"
-    ]
-    oac_actual = (
-        pd.read_csv(data_dir() / "UK_OAC_Final.csv")
-        .set_index("Geography_Code")
-        .rename(columns={"Supergroup": "supergroup_code", "Group": "group_code", "Subgroup": "subgroup_code"})
-    )
-    oac_actual.supergroup_code = oac_actual.supergroup_code.astype(str)
-    return hex_oa_mapping, oac_actual, oac_desc
 
 
 def main() -> None:
