@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# you may need to invoke with uv: e.g. uv run ./build-images.sh
+
+# TODO a better approach would be to use a base image with safer-streets-core already installed
+# (or possibly a wheel from a CI build artifact?)
+
 ver=$(python -c "import safer_streets_core;print(safer_streets_core.__version__)")
 
 cd ../safer-streets-core

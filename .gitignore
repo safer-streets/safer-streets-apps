@@ -10,7 +10,7 @@ data/
 cache/
 output/
 
-uv.lock
+*.whl
 
 chroma_store/
 local_data/

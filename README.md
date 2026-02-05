@@ -2,26 +2,24 @@
 
 ## Install
 
-From an activated venv,
-
 ```sh
-uv sync --active --dev
+uv sync --dev
 ```
 
 ## Run locally
 
 ### App
 
-From the activated venv, picking up the default data dir:
+Picking up the default data dir:
 
 ```sh
-streamlit run src/safer_streets_apps/streamlit/Main.py
+uv run streamlit run src/safer_streets_apps/streamlit/Main.py
 ```
 
 If you want to point it to another data dir (NB the docker image hard-codes this value)
 
 ```sh
-SAFER_STREETS_DATA_DIR=<insert-here> streamlit run src/safer_streets_apps/streamlit/Main.py
+SAFER_STREETS_DATA_DIR=<insert-here> uv run streamlit run src/safer_streets_apps/streamlit/Main.py
 ```
 
 ### API
@@ -30,10 +28,10 @@ From the activated venv, run a local dev API (using port 5000 to avoid conflicti
 the default data dir:
 
 ```sh
-fastapi dev src/safer_streets_apps/fastapi/app.py --port 5000
+uv run fastapi dev src/safer_streets_apps/fastapi/app.py --port 5000
 ```
 
-Use the [swagger page](http://localhost:5000/docs) to test the endpoints or use `curl`, e.g.
+Use the [API doc page](http://localhost:5000/docs) to test the endpoints or use `curl`, e.g.
 
 ```sh
 curl 'http://localhost:5000/pfa_area?force=West%20Yorkshire' \
@@ -109,7 +107,7 @@ not delete (yet)!**
 - [X] Demographics demo
 - [ ] Docker-compose implementation with
 - [X] full datasets on the cloud or in a volume...
-- [ ] ...then remove redundant demo branch
+- [X] ...then remove redundant demo branch
 - [ ] improve UX
 
 ## References
