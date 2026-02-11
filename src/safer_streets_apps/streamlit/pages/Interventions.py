@@ -71,6 +71,10 @@ def main() -> None:
         st.session_state.constrain = False
     if "hotspots" not in st.session_state:
         st.session_state.hotspots = 1
+    if "patrol_effectiveness" not in st.session_state:
+        st.session_state.patrol_effectiveness = 15
+    if "pop_effectiveness" not in st.session_state:
+        st.session_state.pop_effectiveness = 35
 
     st.title("Crime Intervention Explorer")
 
@@ -143,6 +147,21 @@ incomplete or missing data.
         options=[1, 2, 5, 20, 50],
         value=st.session_state.hotspots,
         help="Total hotspots will be this number multiplied by the number of forces",
+    )
+
+    st.session_state.patrol_effectiveness = st.sidebar.slider(
+        "Targeted Patrol Effectiveness (%)",
+        min_value=0,
+        max_value=100,
+        value=st.session_state.patrol_effectiveness,
+        step=5,
+    )
+    st.session_state.pop_effectiveness = st.sidebar.slider(
+        "Problem-Oriented Policing Effectiveness (%)",
+        min_value=0,
+        max_value=100,
+        value=st.session_state.pop_effectiveness,
+        step=5,
     )
 
     try:
@@ -244,9 +263,12 @@ incomplete or missing data.
         st.markdown(f"""
             - **Hotspots for {crime_type} determined using data from {lb_start} to {lb_end} inclusive**
             - **Crimes occurring in hotspots counted from {lf_start} to {lf_end} inclusive**
-            - **{st.session_state.hotspots * len(FORCES)} hex cells ({hotspot_area:.1f}km²) capture {crime_coverage:.3%} of crimes
-                ({count_data.lookforward_total.sum()} offences) in
-            {area_coverage:.3%} of total land area**
+            - **{st.session_state.hotspots * len(FORCES)} hex cells ({hotspot_area:.1f}km²) capture {crime_coverage:.3%}
+            of crimes ({count_data.lookforward_total.sum()} offences) in {area_coverage:.3%} of total land area**
+            - **Estimated national reduction from targeted patrol in these hotspots:
+            {crime_coverage * st.session_state.patrol_effectiveness:.3f}%**
+            - **Estimated national reduction from problem-solving approaches in these hotspots:
+            {crime_coverage * st.session_state.pop_effectiveness:.3f}%**
         """)
 
         with st.expander("Hotspot counts by force"):
