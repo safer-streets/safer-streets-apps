@@ -74,7 +74,7 @@ docker run -p5000:5000 --mount type=bind,source=../data,target=/mnt/data \
 docker run -p8000:8000 --mount type=bind,source=../data,target=/mnt/data \
   -e SAFER_STREETS_DATA_DIR=/mnt/data \
   -e SAFER_STREETS_API_URL=http://localhost:5000 \
-  -e SAFER_STREETS_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
+  -e SAFER_STREETS_API_KEY=$SAFER_STREETS_API_KEY \
   ghcr.io/safer-streets/safer-streets-apps
 ```
 

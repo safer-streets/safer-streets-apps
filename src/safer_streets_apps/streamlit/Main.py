@@ -13,7 +13,10 @@ st.markdown("# Welcome to Safer Streets @ Leeds!")
 
 st.markdown("""
 This site hosts some interactive demo apps allowing practitioners and policymakers to explore historical crime patterns
-interactively
+interactively.
+
+Please note that to keep costs down the apps are hosted on a budget service plan, and may respond slowly. We can
+temporarily adjust the service plan if necessary.
 
 Feedback and suggestions for improvements or new features will be gratefully received, and can be submitted
 [here](https://github.com/safer-streets/safer-streets-apps/issues).

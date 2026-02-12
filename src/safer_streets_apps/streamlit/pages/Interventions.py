@@ -1,5 +1,5 @@
 import os
-from typing import Any, get_args
+from typing import Any, Literal, get_args
 
 import geopandas as gpd
 import pandas as pd
@@ -23,6 +23,8 @@ FORCES = tuple(
     if f not in ["BTP", "Greater Manchester", "Northern Ireland", "Gwent"]
 )
 
+Constraint = Literal["National", "Equal", "Size"]
+
 # URL = "http://localhost:5000"  # note this won't resolve the host's loopback without running with --network=host
 URL = os.environ["SAFER_STREETS_API_URL"]
 N_MONTHS = 36
@@ -35,13 +37,24 @@ REF_LON = -2.0
 
 
 @st.cache_data
-def get_national_counts() -> pd.DataFrame:
-    return pd.read_parquet(data_dir() / f"national_hotspots_{latest_month()}.parquet")
+def get_counts(constraint: Constraint) -> pd.DataFrame:
+    match constraint:
+        case "National":
+            return pd.read_parquet(data_dir() / f"national_hotspots_{latest_month()}.parquet")
+        case "Equal":
+            return pd.read_parquet(data_dir() / f"force_hotspots_{latest_month()}.parquet")
+        case "Size":
+            return pd.read_parquet(data_dir() / f"headcount_hotspots_{latest_month()}.parquet")
 
 
-@st.cache_data
-def get_force_counts() -> pd.DataFrame:
-    return pd.read_parquet(data_dir() / f"force_hotspots_{latest_month()}.parquet")
+# @st.cache_data
+# def get_national_counts() -> pd.DataFrame:
+#     return pd.read_parquet(data_dir() / f"national_hotspots_{latest_month()}.parquet")
+
+
+# @st.cache_data
+# def get_force_counts() -> pd.DataFrame:
+#     return pd.read_parquet(data_dir() / f"force_hotspots_{latest_month()}.parquet")
 
 
 @st.cache_data
@@ -67,8 +80,8 @@ def main() -> None:
         st.session_state.lookforward = 3
     if "ref_date" not in st.session_state:
         st.session_state.ref_date = MONTHS[-12]
-    if "constrain" not in st.session_state:
-        st.session_state.constrain = False
+    if "constraint" not in st.session_state:
+        st.session_state.constraint = get_args(Constraint)[0]
     if "hotspots" not in st.session_state:
         st.session_state.hotspots = 1
     if "patrol_effectiveness" not in st.session_state:
@@ -138,8 +151,12 @@ incomplete or missing data.
         st.session_state.ref_date = MONTHS[-12]
         st.sidebar.markdown(f"Reference date: {st.session_state.ref_date}")
 
-    st.session_state.constrain = st.sidebar.checkbox(
-        "Constrain hotspots to each force", value=st.session_state.constrain
+    st.session_state.constraint = st.sidebar.selectbox(
+        "Constrain hotspots to forces",
+        get_args(Constraint),
+        index=0,
+        help="Whether to constrain the hotspots to an equal number for each force ('Equal'), proportionately to "
+        "the force's officer headcount ('Size'), or not at all ('National')",
     )
 
     st.session_state.hotspots = st.sidebar.select_slider(
@@ -166,7 +183,8 @@ incomplete or missing data.
 
     try:
         with st.spinner("Loading crime data..."):
-            count_data = (get_force_counts() if st.session_state.constrain else get_national_counts()).loc[
+            # count_data = (get_force_counts() if st.session_state.constrain else get_national_counts()).loc[
+            count_data = get_counts(st.session_state.constraint).loc[
                 (
                     st.session_state.lookback,
                     st.session_state.ref_date,
