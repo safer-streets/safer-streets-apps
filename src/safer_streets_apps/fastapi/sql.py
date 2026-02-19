@@ -31,7 +31,7 @@ GROUP BY
 
 
 PFA_GEODATA = """
-WITH g as (
+WITH g AS (
     SELECT
         ST_Area(geometry) / 1000000 AS area,
         ST_Transform(geometry, 'EPSG:27700', 'EPSG:4326', always_xy := true) AS geometry
@@ -50,16 +50,37 @@ FROM g
 HEXES = """
 SELECT spatial_unit, ST_AsText(hex200.geometry) AS wkt
 FROM hex200
-WHERE spatial_unit = ANY($1)
+WHERE spatial_unit IN ?
 """
 
+
+PFA_H3_GRID = """
+WITH h AS (
+SELECT unnest(h3_polygon_wkt_to_cells(
+    ST_AsText(ST_Transform(geometry, 'EPSG:27700', 'EPSG:4326', always_xy := true)), ?)) AS id
+    FROM force_boundaries WHERE pfa23nm = ?
+),
+h3 AS (
+    SELECT id, ST_Transform(ST_GeomFromWKB(h3_cell_to_boundary_wkb(id)), 'EPSG:4326', 'EPSG:27700', always_xy := true) AS geometry FROM h
+)
+SELECT id AS spatial_unit, ST_AsText(geometry) AS wkt FROM h3
+"""
+
+
 CENSUS_GEOGRAPHIES = """
-SELECT {geography}CD as spatial_unit, ST_AsText(geometry) AS wkt
-FROM {geography}_boundaries
-WHERE ST_Intersects(
-    {geography}_boundaries.geometry,
-    (SELECT ST_Union_Agg(geometry) FROM force_boundaries WHERE PFA23NM = ?)
-);
+WITH geog AS (
+  SELECT p.spatial_unit, b.geometry
+  FROM pfa_geog_lookup p
+  JOIN {geography}_boundaries b ON p.spatial_unit = b.{geography}CD
+  WHERE p.geog = '{geography}'
+  AND p.PFA23CD = (
+    SELECT DISTINCT PFA23CD
+    FROM force_boundaries
+    WHERE PFA23NM = ?
+    LIMIT 1
+  )
+)
+SELECT spatial_unit, ST_AsText(geometry) AS wkt FROM geog
 """
 
 HEX_COUNTS = """
@@ -140,6 +161,25 @@ GROUP BY c.spatial_unit, wkt, h.geometry
 ORDER BY count DESC, SUM(count) / area DESC, c.spatial_unit ASC
 LIMIT $4;
 """
+
+
+H3_CRIME_COUNTS = """
+WITH h AS (
+SELECT unnest(h3_polygon_wkt_to_cells(
+    ST_AsText(ST_Transform(geometry, 'EPSG:27700', 'EPSG:4326', always_xy := true)), $resolution)) AS id
+    FROM force_boundaries WHERE pfa23nm = $pfa
+),
+h3 AS (
+    SELECT id, ST_Transform(ST_GeomFromWKB(h3_cell_to_boundary_wkb(id)), 'EPSG:4326', 'EPSG:27700', always_xy := true) AS geometry FROM h
+)
+-- SELECT id, ST_AsText(geometry) AS wkt FROM h3
+SELECT h3.id AS spatial_unit, c.crime_type AS crime_type, c.month AS month, COUNT(c.month) AS count
+FROM h3
+LEFT JOIN crime_data c ON ST_Intersects(h3.geometry, c.geometry)
+WHERE c.month IN $months AND c.crime_type = $crime_type
+GROUP BY spatial_unit, month, crime_type
+"""
+
 
 TABLE_SCHEMAS = """
 SELECT table_name,

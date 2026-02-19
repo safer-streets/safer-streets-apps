@@ -1,7 +1,7 @@
 import logging
 from typing import get_args
 
-import duckdb
+from duckdb import DuckDBPyConnection
 from itrx import Itr
 from safer_streets_core.database import add_table_from_shapefile
 from safer_streets_core.utils import CrimeType, data_dir, latest_month, monthgen
@@ -11,13 +11,17 @@ from safer_streets_apps.fastapi import sql
 N_MONTHS = 36
 
 
-def init_db(con: duckdb.DuckDBPyConnection) -> None:
+def init_db(con: DuckDBPyConnection) -> None:
     logging.info("Initialising database")
+
+    # H3 extension
+    con.execute("INSTALL h3 FROM community;LOAD h3;")
+
     # force boundaries
     add_table_from_shapefile(
         con,
         "force_boundaries",
-        "PFA23NM",
+        ["PFA23CD", "PFA23NM"],
         "Police_Force_Areas_December_2023_EW_BFE_2734900428741300179.zip",
         exists_ok=True,
     )
@@ -39,6 +43,10 @@ def init_db(con: duckdb.DuckDBPyConnection) -> None:
     )
     add_table_from_shapefile(
         con, "OA21_boundaries", "OA21CD", "Output_Areas_2021_EW_BGC_V2_-6371128854279904124.zip", exists_ok=True
+    )
+
+    con.execute(
+        f"CREATE TABLE IF NOT EXISTS pfa_geog_lookup AS SELECT * FROM read_parquet('{data_dir() / 'pfa-geog-lookup.parquet'}')"
     )
 
     # hex grid
