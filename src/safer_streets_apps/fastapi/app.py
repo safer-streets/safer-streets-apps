@@ -10,16 +10,14 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from itrx import Itr
 from safer_streets_core.database import ephemeral_duckdb_spatial_connector
 from safer_streets_core.spatial import CensusGeography, SpatialUnit
-from safer_streets_core.utils import CrimeType, Force, Month, fix_force_name, monthgen, latest_month
+from safer_streets_core.utils import CrimeType, Force, Month, fix_force_name, latest_month, monthgen
 from shapely import wkt
 
 import safer_streets_apps.fastapi.sql as sql
+from safer_streets_apps.fastapi import impl
 from safer_streets_apps.fastapi.auth import handle_api_key
+from safer_streets_apps.fastapi.models import CrimeCountsRequest, DfJson, FeaturesRequest, MonthStr
 from safer_streets_apps.fastapi.startup import init_db
-
-# TODO tighten up these models
-DfJson = list[dict[str, Any]]
-
 
 # Configure basic logging
 logging.basicConfig(
@@ -51,16 +49,29 @@ auth_routes = APIRouter(dependencies=[Depends(handle_api_key)])
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_exception_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     return JSONResponse(
         status_code=400,
-        content={"error": "Invalid input", "details": exc.errors()},
+        content={
+            "error": exc.__class__.__name__,
+            "detail": exc.errors(),
+            "path": request.url.path,
+            "method": request.method,
+        },
     )
 
 
 @app.exception_handler(Exception)
-async def http_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
-    return JSONResponse(status_code=400, content={"error": exc.__class__.__name__, "detail": str(exc)})
+async def custom_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=400,
+        content={
+            "error": exc.__class__.__name__,
+            "detail": str(exc),
+            "path": request.url.path,
+            "method": request.method,
+        },
+    )
 
 
 @open_routes.get("/docs", include_in_schema=False)
@@ -102,8 +113,11 @@ async def diagnostics() -> dict[str, Any]:
     return {"memory (MB)": memory, "table_schemas": schema}
 
 
+# TODO consider replacing all the get/post requests for features with single endpoints
+
+
 @auth_routes.get("/pfa_geodata")
-async def pfa_boundary(force: Force) -> Response:  # dict[str, Any]:
+async def pfa_boundary(force: Force) -> Response:
     """Return area, centroid and geometry of PFA (in geojson format using lat/lon CRS)"""
     raw_data = app.state.con.sql(
         sql.PFA_GEODATA,
@@ -123,14 +137,16 @@ async def pfa_boundary(force: Force) -> Response:  # dict[str, Any]:
     )
 
 
-@auth_routes.post("/hexes")
+@auth_routes.post("/hexes", deprecated=True)
 async def hexes(ids: list[int], latlon: Annotated[bool, Query] = False) -> Response:
     """
     Return geometries for requested hex features.
-    Queries to fetch all hexes for a PFA are too slow/large
-    Will return BNG (epsg=27700) coordinates unless `latlon=True` (epsg=4326)
+    Queries to fetch all hexes for a PFA can be too slow/large
+    Will return BNG (EPSG:27700) coordinates, or degrees (EPSG:4326) if `latlon` is set to true
+
+    **Deprecated: use the `/features` endpoint**
     """
-    raw_hexes = app.state.con.sql(sql.HEXES, params=(ids,)).fetchdf()
+    raw_hexes = app.state.con.sql(sql.HEX_FEATURES, params=(ids,)).fetchdf()
     # TODO is there a more efficient way of rendering GeoJSON, including properties and CRS,
     # without going via geopandas?
     hexes = gpd.GeoDataFrame(
@@ -141,12 +157,21 @@ async def hexes(ids: list[int], latlon: Annotated[bool, Query] = False) -> Respo
     return Response(content=hexes.to_json(), media_type="application/json")
 
 
+@auth_routes.post("/features")
+async def features(request: FeaturesRequest, latlon: Annotated[bool, Query] = False) -> Response:
+    """
+    Return geometries for requested features.
+    Will return BNG (EPSG:27700) coordinates, or degrees (EPSG:4326) if `latlon` is set to true
+    """
+    return Response(content=impl.features(app.state.con, request, latlon).to_json(), media_type="application/json")
+
+
 @auth_routes.get("/h3/{resolution}")
-async def h3(force: Force, resolution: int) -> Response:
+async def h3(force: Force, resolution: int, latlon: Annotated[bool, Query] = False) -> Response:
     """
-    Return H3 grid for a given PFA and resolution (e.g 8 ~ 0.7km2, 9 ~ 0.1km2)
+    Return H3 grid for a given PFA and resolution (e.g 7 ~ 5km², 8 ~ 0.7km², 9 ~ 0.1km²)
+    Will return BNG (EPSG:27700) coordinates or degrees (EPSG:4326) if `latlon` is set to true
     """
-    "SELECT h3_polygon_wkt_to_cells(geometry) FROM "
     raw = app.state.con.sql(
         sql.PFA_H3_GRID,
         params=(
@@ -158,6 +183,9 @@ async def h3(force: Force, resolution: int) -> Response:
     features = gpd.GeoDataFrame(raw[["spatial_unit"]], geometry=raw.wkt.apply(wkt.loads), crs="epsg:27700").set_index(
         "spatial_unit"
     )
+    if latlon:
+        features = features.to_crs(epsg=4326)
+
     return Response(content=features.to_json(), media_type="application/json")
 
 
@@ -173,18 +201,26 @@ async def census_geographies(geography: CensusGeography, force: Force) -> Respon
     return Response(content=features.to_json(), media_type="application/json")
 
 
-@auth_routes.get("/hex_counts")
+@auth_routes.get("/hex_counts", deprecated=True)
 async def hex_counts(force: Force, category: CrimeType) -> DfJson:
-    """Returns counts for crimes aggregated to hexes for given force and category for all months by spatial unit id"""
-    return app.state.con.sql(sql.HEX_COUNTS, params=(fix_force_name(force), category)).fetch_arrow_table().to_pylist()
+    """
+    Returns counts for crimes aggregated to hexes for given force and category for all months by spatial unit id
+
+    **Deprecated: use the crime_counts endpoint**
+    """
+    return (
+        app.state.con.sql(sql.HEX_COUNTS_OLD, params=(fix_force_name(force), category)).fetch_arrow_table().to_pylist()
+    )
 
 
 # TODO potentially deprecate in favour of crime_counts
-@auth_routes.get("/census_counts")
+@auth_routes.get("/census_counts", deprecated=True)
 async def census_counts(geography: CensusGeography, force: Force, category: CrimeType) -> DfJson:
     """
     Returns counts for crimes aggregated to census geographies for given force and category for all months by
     spatial unit id
+
+    **Deprecated: use the crime_counts endpoint**
     """
     if geography != "OA21":
         raise ValueError("only implemented for OA21. TODO: aggregate to L/MSOA21")
@@ -195,42 +231,67 @@ async def census_counts(geography: CensusGeography, force: Force, category: Crim
     )
 
 
+@auth_routes.post("/crime_counts")
+async def crime_counts_post(
+    params: CrimeCountsRequest,
+) -> DfJson:
+    """
+    Get crime counts for given categories and months, aggregated by geography.
+
+    Args:
+        geography: The spatial unit for aggregation (HEX (200m), H3, MSOA21, LSOA21, OA21).
+        resolution: Required when geography is H3, specifies the H3 resolution level.
+        force: The police force to filter crimes by.
+        categories: List of the crime type/category to filter by.
+        months: List of months in YYYY-MM format.
+
+    Returns:
+        Crime counts aggregated to the specified geography as JSON/Arrow format.
+
+    Raises:
+        ValueError: If geography is GRID or STREET (not implemented).
+        ValueError: If resolution is not specified for H3 geography or specified for other geographies.
+    """
+    return impl.crime_counts(app.state.con, params)
+
+
 @auth_routes.get("/crime_counts")
-async def crime_counts(
+async def crime_counts_get(
+    *,
     geography: SpatialUnit,
-    resolution: int | None,
+    resolution: int | None = None,
     force: Force,
     category: CrimeType,
-    month: Annotated[str | None, Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")] = None,
+    month: MonthStr | None = None,
     lookback: Annotated[int, Query(ge=1, le=36)] = 1,
 ) -> DfJson:
     """
-    Returns counts for crimes aggregated to geographies for given force and category
-    spatial unit id
+    Get crime counts for a specific category for a give period, aggregated by geography.
+
+    Args:
+        geography: The spatial unit for aggregation (HEX (200m), H3, MSOA21, LSOA21, OA21).
+        resolution: Required when geography is H3, specifies the H3 resolution level.
+        force: The police force to filter crimes by.
+        category: The crime type/category to filter by.
+        month: Optional month in YYYY-MM format. Defaults to the latest available month.
+        lookback: Number of months to look back (1-36). Defaults to 1 (current month only).
+
+    Returns:
+        Crime counts aggregated to the specified geography as JSON/Arrow format.
+
+    Raises:
+        ValueError: If geography is GRID or STREET (not implemented).
+        ValueError: If resolution is not specified for H3 geography or specified for other geographies.
     """
-
-    print(geography, resolution, force, category, month, lookback)
-
-    if geography in ["HEX", "GRID", "STREET"]:
-        raise ValueError("only implemented for H3, MSOA21 and LSOA21OA21.")
-    elif (geography == "H3") == (resolution is None):
-        raise ValueError("resolution should be specified (only) when geography is H3")
 
     month_ = Month.parse_str(month) if month else latest_month()
     months = Itr(monthgen(month_, backwards=True)).take(lookback).map(str).collect()
 
-    if geography == "H3":
-        return (
-            app.state.con.sql(
-                sql.H3_CRIME_COUNTS,
-                params={"resolution": resolution, "pfa": force, "months": months, "crime_type": category},
-            )
-            .fetch_arrow_table()
-            .to_pylist()
-        )
-    else:
-        pass
-    return []
+    query = CrimeCountsRequest(
+        geography=geography, resolution=resolution, force=force, categories=[category], months=months
+    )
+
+    return impl.crime_counts(app.state.con, query)
 
 
 @auth_routes.get("/hotspots")
@@ -243,8 +304,10 @@ async def hotspots(
     n_hotspots: Annotated[int, Query(ge=1)],
 ) -> Response:
     """
-    Return geojson of top n_hotpots with features and counts for a specific force (or England & Wales if no
-    force specified), category and month
+    Return geojson of top `n_hotpots` with features (200m hexes) and counts of crimes of a given category in the period
+    requested, for a specific force (or England & Wales if no force specified).
+
+    The period is the `lookback` months up to and including `month`
     """
 
     months = Itr(monthgen(Month.parse_str(month), backwards=True)).take(lookback).map(str).collect()

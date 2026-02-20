@@ -47,12 +47,24 @@ FROM g
 """
 
 
-HEXES = """
+HEX_FEATURES = """
 SELECT spatial_unit, ST_AsText(hex200.geometry) AS wkt
 FROM hex200
 WHERE spatial_unit IN ?
 """
 
+H3_FEATURES = """
+WITH ids AS (
+SELECT * AS spatial_unit FROM unnest(?)
+)
+SELECT spatial_unit, h3_cell_to_boundary_wkt(spatial_unit) AS wkt FROM ids
+"""
+
+CENSUS_FEATURES = """
+SELECT {geography}CD AS spatial_unit, ST_AsText(geometry) AS wkt
+FROM {geography}_boundaries
+WHERE {geography}CD IN ?
+"""
 
 PFA_H3_GRID = """
 WITH h AS (
@@ -83,7 +95,7 @@ WITH geog AS (
 SELECT spatial_unit, ST_AsText(geometry) AS wkt FROM geog
 """
 
-HEX_COUNTS = """
+HEX_COUNTS_OLD = """
 WITH h AS (
     SELECT * FROM hex200
     WHERE ST_Intersects(
@@ -162,7 +174,6 @@ ORDER BY count DESC, SUM(count) / area DESC, c.spatial_unit ASC
 LIMIT $4;
 """
 
-
 H3_CRIME_COUNTS = """
 WITH h AS (
 SELECT unnest(h3_polygon_wkt_to_cells(
@@ -176,7 +187,40 @@ h3 AS (
 SELECT h3.id AS spatial_unit, c.crime_type AS crime_type, c.month AS month, COUNT(c.month) AS count
 FROM h3
 LEFT JOIN crime_data c ON ST_Intersects(h3.geometry, c.geometry)
-WHERE c.month IN $months AND c.crime_type = $crime_type
+WHERE c.month IN $months AND c.crime_type IN $crime_types
+GROUP BY spatial_unit, month, crime_type
+"""
+
+HEX_CRIME_COUNTS = """
+WITH h AS (
+    SELECT * FROM hex200
+    WHERE ST_Intersects(
+        hex200.geometry,
+        (SELECT ST_Union_Agg(geometry) FROM force_boundaries WHERE PFA23NM = $pfa)
+    )
+)
+SELECT c.spatial_unit, c.month, c.count FROM crime_counts_hex c
+RIGHT JOIN h ON h.spatial_unit = c.spatial_unit
+WHERE c.month IN $months AND c.crime_type IN $crime_types
+"""
+
+CENSUS_CRIME_COUNTS = """
+WITH geog AS (
+    SELECT p.spatial_unit, b.geometry
+    FROM pfa_geog_lookup p
+    JOIN {geography}_boundaries b ON p.spatial_unit = b.{geography}CD
+    WHERE p.geog = '{geography}'
+    AND p.PFA23CD = (
+        SELECT DISTINCT PFA23CD
+        FROM force_boundaries
+        WHERE PFA23NM = $pfa
+        LIMIT 1
+    )
+)
+SELECT geog.spatial_unit, c.crime_type AS crime_type, c.month AS month, COUNT(c.month) AS count
+FROM geog
+LEFT JOIN crime_data c ON ST_Intersects(geog.geometry, c.geometry)
+WHERE c.month IN $months AND c.crime_type IN $crime_types
 GROUP BY spatial_unit, month, crime_type
 """
 
