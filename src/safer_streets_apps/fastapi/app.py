@@ -124,13 +124,16 @@ async def pfa_boundary(force: Force) -> Response:
         params=(fix_force_name(force),),
     ).fetchone()
 
+    # string values need to be quoted
     return Response(
         content=f"""{{
-            "type": "Feature", "geometry": {raw_data[3]},
+            "type": "Feature", "geometry": {raw_data[5]},
             "properties": {{
-                "area": {raw_data[0]},
-                "lon": {raw_data[1]},
-                "lat": {raw_data[2]}
+                "spatial_unit": "{raw_data[0]}",
+                "name": "{raw_data[1]}",
+                "area": {raw_data[2]},
+                "lon": {raw_data[3]},
+                "lat": {raw_data[4]}
             }}
         }}""",
         media_type="application/json",
@@ -163,6 +166,7 @@ async def features(request: FeaturesRequest, latlon: Annotated[bool, Query] = Fa
     Return geometries for requested features.
     Will return BNG (EPSG:27700) coordinates, or degrees (EPSG:4326) if `latlon` is set to true
     """
+    # NB to_json drops the index name and replaces with "id"
     return Response(content=impl.features(app.state.con, request, latlon).to_json(), media_type="application/json")
 
 

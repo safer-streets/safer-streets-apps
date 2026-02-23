@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 from dateutil.relativedelta import relativedelta
 from itrx import Itr
+from safer_streets_core.api_helpers import fetch_df, fetch_gdf
 from safer_streets_core.spatial import (
     SpatialUnit,
     get_demographics,
@@ -13,7 +14,15 @@ from safer_streets_core.spatial import (
     load_population_data,
     map_to_spatial_unit,
 )
-from safer_streets_core.utils import Force, Month, data_dir, get_monthly_crime_counts, load_crime_data, monthgen
+from safer_streets_core.utils import (
+    CrimeType,
+    Force,
+    Month,
+    data_dir,
+    get_monthly_crime_counts,
+    load_crime_data,
+    monthgen,
+)
 from safer_streets_core.utils import latest_month as core_latest_month
 
 
@@ -61,17 +70,14 @@ geographies = {
     "Middle layer Super Output Areas (census)": ("MSOA21", {}),
     "Lower layer Super Output Areas (census)": ("LSOA21", {}),
     "Output Areas (census)": ("OA21", {}),
-    "800m hexes": ("HEX", {"size": 800.0}),
-    "400m hexes": ("HEX", {"size": 400.0}),
     "200m hexes": ("HEX", {"size": 200.0}),
+    "H3(7)": ("H3", {"resolution": 7}),
+    "H3(8)": ("H3", {"resolution": 8}),
     "H3(9)": ("H3", {"resolution": 9}),
-    "1km grid": ("GRID", {"size": 1000.0}),
-    "500m grid": ("GRID", {"size": 500.0}),
-    "250m grid": ("GRID", {"size": 250.0}),
 }
 
 
-def get_counts_and_features(
+def get_counts_and_features_old(
     raw_data: gpd.GeoDataFrame, boundary: gpd.GeoDataFrame, spatial_unit: SpatialUnit, **spatial_unit_params: Any
 ):
     crime_data, features = map_to_spatial_unit(raw_data, boundary, spatial_unit, **spatial_unit_params)
@@ -84,6 +90,60 @@ def get_counts_and_features(
     # and aggregate
     counts = get_monthly_crime_counts(crime_data, features)
     return counts, features, boundary
+
+
+@st.cache_data
+def get_boundary(force: Force) -> gpd.GeoDataFrame:
+    # returns EPSG:4326, with area
+    boundary = fetch_gdf("/pfa_geodata", params={"force": force})
+    return boundary
+
+
+@st.cache_data
+def get_counts_and_features(
+    force: Force, geography: str, category: CrimeType, month: str, lookback: int
+) -> tuple[gpd.GeoDataFrame, pd.DataFrame]:
+
+    spatial_unit, spatial_unit_params = geographies[geography]
+
+    counts = (
+        fetch_df(
+            "/crime_counts",
+            params={
+                "category": category,
+                "force": force,
+                "geography": spatial_unit,
+                "month": str(month),
+                "lookback": lookback,
+            }
+            | spatial_unit_params,
+        )
+        .set_index(["spatial_unit", "month"])["count"]
+        .unstack(level="month", fill_value=0)
+    )
+
+    # GeoDataFrame.to_json resets the index and names it to "id"
+    features = (
+        fetch_gdf("/features", http_post=True, payload={"geography": spatial_unit, "ids": counts.index.to_list()})
+        .rename(columns={"id": "spatial_unit"})
+        .set_index("spatial_unit", drop=True)
+    )
+    # get the areas
+    features["area_km2"] = features.area / 1_000_000
+    # now convert everything to Webmercator
+    features = features.to_crs(epsg=4326)
+
+    counts.index = counts.index.astype(str)
+
+    return features, counts
+
+
+def get_ethnicity_totals(raw_population: gpd.GeoDataFrame | None, force: Force) -> pd.Series:
+    if raw_population is None:
+        return pd.Series(index=[force], data=0)
+    ethnicity = raw_population.groupby("C2021_ETH_20_NAME", observed=True).C_SEX_NAME.count().rename("count")
+    ethnicity.index = ethnicity.index.map(lambda s: s[:5])
+    return ethnicity
 
 
 def get_ethnicity(raw_population: gpd.GeoDataFrame | None, features: gpd.GeoDataFrame) -> pd.DataFrame:

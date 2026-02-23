@@ -20,7 +20,7 @@ from safer_streets_apps.streamlit.common import (
     cache_crime_data,
     cache_demographic_data,
     geographies,
-    get_counts_and_features,
+    get_counts_and_features_old,
     get_ethnicity,
 )
 
@@ -81,7 +81,7 @@ rank-biased overlap, Spearman rank correlation
 
             # map crimes to features
             spatial_unit, spatial_unit_params = geographies[spatial_unit_name]
-            counts, features, boundary = get_counts_and_features(
+            counts, features, boundary = get_counts_and_features_old(
                 raw_data, boundary, spatial_unit, **spatial_unit_params
             )
             total_area = features.area_km2.sum()

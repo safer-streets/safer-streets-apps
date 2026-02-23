@@ -16,7 +16,7 @@ from safer_streets_apps.streamlit.common import (
     cache_demographic_data,
     date_range,
     geographies,
-    get_counts_and_features,
+    get_counts_and_features_old,
     get_ethnicity,
     latest_month,
 )
@@ -77,7 +77,7 @@ the hotspots - that is, the set of areas that capture the most crime for the tot
             # map crimes to features
             centroid_lat, centroid_lon = raw_data.lat.mean(), raw_data.lon.mean()
             spatial_unit, spatial_unit_params = geographies[spatial_unit_name]
-            counts, features, boundary = get_counts_and_features(
+            counts, features, boundary = get_counts_and_features_old(
                 raw_data, boundary, spatial_unit, **spatial_unit_params
             )
             total_area = features.area_km2.sum()

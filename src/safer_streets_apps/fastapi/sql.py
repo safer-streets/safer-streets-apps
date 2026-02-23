@@ -33,12 +33,16 @@ GROUP BY
 PFA_GEODATA = """
 WITH g AS (
     SELECT
+        PFA23CD AS spatial_unit,
+        PFA23NM AS name,
         ST_Area(geometry) / 1000000 AS area,
         ST_Transform(geometry, 'EPSG:27700', 'EPSG:4326', always_xy := true) AS geometry
     FROM force_boundaries
     WHERE PFA23NM = ?
 )
 SELECT
+    spatial_unit,
+    name,
     area,
     ST_X(ST_Centroid(geometry)),
     ST_Y(ST_Centroid(geometry)),
