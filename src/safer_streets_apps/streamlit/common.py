@@ -96,7 +96,7 @@ def get_counts_and_features_old(
 def get_boundary(force: Force) -> gpd.GeoDataFrame:
     # returns EPSG:4326, with area
     boundary = fetch_gdf("/pfa_geodata", params={"force": force})
-    return boundary
+    return boundary.set_index("spatial_unit")
 
 
 @st.cache_data
@@ -136,6 +136,15 @@ def get_counts_and_features(
     counts.index = counts.index.astype(str)
 
     return features, counts
+
+
+def get_ordered_counts(counts: pd.DataFrame, month: Month, features: gpd.GeoDataFrame) -> pd.DataFrame:
+    ordered_counts = pd.concat([counts.sum(axis=1).rename("n_crimes"), features.area_km2], axis=1)
+    ordered_counts["density"] = ordered_counts.n_crimes / ordered_counts.area_km2
+    ordered_counts = ordered_counts.sort_values(by="density", ascending=False)
+    # cum area not including current row
+    ordered_counts["cum_area"] = ordered_counts.area_km2.cumsum().shift(fill_value=0)
+    return ordered_counts
 
 
 def get_ethnicity_totals(raw_population: gpd.GeoDataFrame | None, force: Force) -> pd.Series:

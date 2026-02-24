@@ -1,7 +1,5 @@
 from typing import cast, get_args
 
-import geopandas as gpd
-import pandas as pd
 import pydeck as pdk
 import streamlit as st
 from safer_streets_core.utils import (
@@ -20,25 +18,40 @@ from safer_streets_apps.streamlit.common import (
     get_counts_and_features,
     get_ethnicity,
     get_ethnicity_totals,
+    get_ordered_counts,
 )
-
-
-# TODO move to common if reusable
-def get_ordered_counts(counts: pd.DataFrame, month: Month, features: gpd.GeoDataFrame) -> pd.DataFrame:
-    ordered_counts = pd.concat([counts.sum(axis=1).rename("n_crimes"), features.area_km2], axis=1)
-    ordered_counts["density"] = ordered_counts.n_crimes / ordered_counts.area_km2
-    ordered_counts = ordered_counts.sort_values(by="density", ascending=False)
-    # cum area not including current row
-    ordered_counts["cum_area"] = ordered_counts.area_km2.cumsum().shift(fill_value=0)
-    return ordered_counts
-
 
 st.set_page_config(layout="wide", page_title="Crime Capture", page_icon="👮")
 st.logo("./assets/safer-streets-small.png", size="large")
 
 
+def init() -> None:
+    if "force" not in st.session_state:
+        st.session_state.force = get_args(Force)[DEFAULT_FORCE]
+    if "category" not in st.session_state:
+        st.session_state.category = CATEGORIES[1]
+    if "spatial_unit_name" not in st.session_state:
+        st.session_state.spatial_unit_name = list(geographies.keys())[0]
+    if "area_threshold" not in st.session_state:
+        st.session_state.area_threshold = 10.0
+    if "lookback_window" not in st.session_state:
+        st.session_state.lookback_window = 1
+    if "show_missed" not in st.session_state:
+        st.session_state.show_missed = False
+    if "month" not in st.session_state:
+        st.session_state.month = all_months[-1]
+    if "demographics" not in st.session_state:
+        st.session_state.demographics = False
+
+
 def main() -> None:
+    init()
     st.title("Crime Capture Explorer")
+
+    st.warning(
+        "##### :construction: This page uses the experimental Safer Streets [geospatial data API]"
+        "(https://uol-a011-prd-uks-wkld025-asp1-api1-acdkeudzafe8dtc9.uksouth-01.azurewebsites.net/docs#/)"
+    )
 
     st.markdown("## Highlighting crime hotspots")
 
@@ -62,13 +75,17 @@ its crime and demographics (Hover on the force area boundary for average values.
 
     st.sidebar.header("Capture")
 
-    force = cast(
-        Force, st.sidebar.selectbox("Force Area", get_args(Force), index=DEFAULT_FORCE)
+    st.session_state.force = cast(
+        Force, st.sidebar.selectbox("Force Area", get_args(Force), index=get_args(Force).index(st.session_state.force))
     )  # default="West Yorkshire"
 
-    category = st.sidebar.selectbox("Crime type", CATEGORIES, index=1)
+    st.session_state.category = st.sidebar.selectbox(
+        "Crime type", CATEGORIES, index=CATEGORIES.index(st.session_state.category)
+    )
 
-    spatial_unit_name = st.sidebar.selectbox("Spatial Unit", geographies.keys(), index=0)
+    st.session_state.spatial_unit_name = st.sidebar.selectbox(
+        "Spatial Unit", geographies.keys(), index=list(geographies.keys()).index(st.session_state.spatial_unit_name)
+    )
 
     # m = folium.Map(location=[53.924, -1.832], zoom_start=16)
 
@@ -81,62 +98,78 @@ its crime and demographics (Hover on the force area boundary for average values.
     # # call to render Folium map in Streamlit
     # sf.folium_static(m, width=800)
 
-    area_threshold = st.sidebar.slider(
+    st.session_state.area_threshold = st.sidebar.slider(
         "Coverage (km²)",
         1.0,
         100.0,
         step=1.0,
-        value=10.0,
+        value=st.session_state.area_threshold,
         help="Focus on the smallest land area that captures the most crime",
     )
 
-    lookback_window = st.sidebar.slider(
+    st.session_state.lookback_window = st.sidebar.slider(
         "Lookback window (months)",
         min_value=1,
         max_value=12,
-        value=1,
+        value=st.session_state.lookback_window,
         step=1,
         help="Number of months of data to aggregate at each step",
     )
 
-    show_missed = st.sidebar.checkbox(
+    st.session_state.show_missed = st.sidebar.checkbox(
         "Show areas not captured",
         help="Areas that contain some crimes, but not enough to feature in the 'hot' list",
     )
 
     def display_name(m: Month) -> str:
-        if lookback_window == 1:
+        if st.session_state.lookback_window == 1:
             return str(m)
-        return f"{m - lookback_window + 1} to {m}"
+        return f"{m - st.session_state.lookback_window + 1} to {m}"
 
-    month = st.sidebar.select_slider(
+    st.session_state.month = st.sidebar.select_slider(
         "Month selection",
-        all_months[lookback_window:],
-        value=all_months[-1],
+        all_months[st.session_state.lookback_window :],
+        value=st.session_state.month,
         format_func=display_name,
         help="Select month",
     )
 
+    st.session_state.demographics = st.sidebar.checkbox(
+        "Show feature demographics",
+        help="Include a breakdown of the population by ethnicity in each feature, if available. "
+        "NB this is resource-intensive and will slow the app down significantly",
+    )
+
     try:
         with st.spinner("Loading crime and geographic data..."):
-            boundary = get_boundary(force)
+            boundary = get_boundary(st.session_state.force)
             total_area = boundary["area"].sum()
             centroid_lat, centroid_lon = boundary.lat.mean(), boundary.lon.mean()
 
-            features, counts = get_counts_and_features(force, spatial_unit_name, category, str(month), lookback_window)
+            features, counts = get_counts_and_features(
+                st.session_state.force,
+                st.session_state.spatial_unit_name,
+                st.session_state.category,
+                str(st.session_state.month),
+                st.session_state.lookback_window,
+            )
 
         # process data
-        with st.spinner("Processing crime and demographic data..."):
-            try:
-                raw_population = cache_demographic_data(force)
-            except FileNotFoundError as e:
-                st.warning(e)
-                raw_population = None
+        if st.session_state.demographics:
+            with st.spinner("Processing demographic data..."):
+                try:
+                    raw_population = cache_demographic_data(st.session_state.force)
+                except FileNotFoundError as e:
+                    st.warning(e)
+                    raw_population = None
 
-            ethnicity = get_ethnicity(raw_population, features)
-            ethnicity_total = get_ethnicity_totals(raw_population, force)
+        else:
+            raw_population = None
+        ethnicity = get_ethnicity(raw_population, features)
+        ethnicity_total = get_ethnicity_totals(raw_population, st.session_state.force)
 
-            ordered_counts = get_ordered_counts(counts, month, features)
+        with st.spinner("Processing crime data..."):
+            ordered_counts = get_ordered_counts(counts, st.session_state.month, features)
 
             # make boundary work with the tooltip
             boundary["n_crimes"] = ordered_counts.n_crimes.sum()
@@ -154,15 +187,19 @@ its crime and demographics (Hover on the force area boundary for average values.
 
             # deal with case where we've captured all incidents in a smaller area than specified
             captured_features = features[["geometry"]].join(
-                ordered_counts[(ordered_counts.cum_area < area_threshold) & (ordered_counts.n_crimes > 0)],
+                ordered_counts[
+                    (ordered_counts.cum_area < st.session_state.area_threshold) & (ordered_counts.n_crimes > 0)
+                ],
                 how="right",
             )
             captured_features = captured_features.join(tooltip_info)
             captured_features["opacity"] = 192 * captured_features.n_crimes / captured_features.n_crimes.max()
 
-            if show_missed:
+            if st.session_state.show_missed:
                 missed_features = features[["geometry"]].join(
-                    ordered_counts[(ordered_counts.cum_area > area_threshold) & (ordered_counts.n_crimes > 0)],
+                    ordered_counts[
+                        (ordered_counts.cum_area > st.session_state.area_threshold) & (ordered_counts.n_crimes > 0)
+                    ],
                     how="right",
                 )
                 missed_features = missed_features.join(tooltip_info)
@@ -204,7 +241,7 @@ its crime and demographics (Hover on the force area boundary for average values.
 
         layers = [boundary_layer, hotspots]
 
-        if show_missed:
+        if st.session_state.show_missed:
             layers.insert(
                 1,
                 pdk.Layer(
@@ -220,12 +257,14 @@ its crime and demographics (Hover on the force area boundary for average values.
                 ),
             )
 
-        start, end = date_range(month - lookback_window + 1, lookback_window)
+        start, end = date_range(
+            st.session_state.month - st.session_state.lookback_window + 1, st.session_state.lookback_window
+        )
         st.markdown(f"""
-            ### {category} in {force} PFA
+            ### {st.session_state.category} in {st.session_state.force} PFA
             - **{ordered_counts.n_crimes.sum()} incidents occurred between {start} and {end} inclusive**
-            - **{len(captured_features)} features ({spatial_unit_name}) covering
-            {captured_features.area_km2.sum():.1f}km² meet the required coverage of {area_threshold}km²**
+            - **{len(captured_features)} features ({st.session_state.spatial_unit_name}) covering
+            {captured_features.area_km2.sum():.1f}km² meet the required coverage of {st.session_state.area_threshold}km²**
             - **{captured_features.n_crimes.sum()} crimes
             ({captured_features.n_crimes.sum() / ordered_counts.n_crimes.sum():.1%}) are captured in these features,
             which comprise {captured_features.area_km2.sum() / total_area:.2%} of the PFA ({total_area:.1f}km²)**
@@ -243,6 +282,7 @@ its crime and demographics (Hover on the force area boundary for average values.
         )
 
         with st.expander("Hotspot Table"):
+            st.dataframe(boundary.drop(columns="geometry"))  # .style.format("{:.1%}", subset=ethnicity.columns))
             st.dataframe(
                 captured_features.drop(columns=["geometry", "cum_area", "name", "opacity"]).sort_values(
                     by="n_crimes", ascending=False
