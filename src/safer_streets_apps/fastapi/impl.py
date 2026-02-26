@@ -58,7 +58,6 @@ def features(con: DuckDBPyConnection, params: FeaturesRequest, latlon: bool) -> 
             ).set_index("spatial_unit", drop=True)
             if not latlon:
                 features = features.to_crs(epsg=27700)
-            print(features)
         case "HEX":
             raw_hexes = con.sql(sql.HEX_FEATURES, params=(params.ids,)).fetchdf()
             # TODO is there a more efficient way of rendering GeoJSON, including properties and CRS,

@@ -188,7 +188,7 @@ h3 AS (
     SELECT id, ST_Transform(ST_GeomFromWKB(h3_cell_to_boundary_wkb(id)), 'EPSG:4326', 'EPSG:27700', always_xy := true) AS geometry FROM h
 )
 -- SELECT id, ST_AsText(geometry) AS wkt FROM h3
-SELECT h3.id AS spatial_unit, c.crime_type AS crime_type, c.month AS month, COUNT(c.month) AS count
+SELECT lcase(hex(h3.id)) AS spatial_unit, c.crime_type AS crime_type, c.month AS month, COUNT(c.month) AS count
 FROM h3
 LEFT JOIN crime_data c ON ST_Intersects(h3.geometry, c.geometry)
 WHERE c.month IN $months AND c.crime_type IN $crime_types
