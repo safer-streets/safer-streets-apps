@@ -113,31 +113,14 @@ async def diagnostics() -> dict[str, Any]:
     return {"memory (MB)": memory, "table_schemas": schema}
 
 
-# TODO consider replacing all the get/post requests for features with single endpoints
-
-
 @auth_routes.get("/pfa_geodata")
-async def pfa_boundary(force: Force) -> Response:
-    """Return area, centroid and geometry of PFA (in geojson format using lat/lon CRS)"""
+async def pfa_geodata(force: Force) -> Response:
     raw_data = app.state.con.sql(
         sql.PFA_GEODATA,
         params=(fix_force_name(force),),
     ).fetchone()
 
-    # string values need to be quoted
-    return Response(
-        content=f"""{{
-            "type": "Feature", "geometry": {raw_data[5]},
-            "properties": {{
-                "spatial_unit": "{raw_data[0]}",
-                "name": "{raw_data[1]}",
-                "area": {raw_data[2]},
-                "lon": {raw_data[3]},
-                "lat": {raw_data[4]}
-            }}
-        }}""",
-        media_type="application/json",
-    )
+    return Response(raw_data[0] if len(raw_data) > 0 else {})
 
 
 @auth_routes.post("/hexes", deprecated=True)

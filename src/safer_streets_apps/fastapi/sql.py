@@ -29,7 +29,9 @@ GROUP BY
     spatial_unit, month, crime_type;
 """
 
-
+# This implementation directly returns geojson so using GeoPandas to translate is not required
+# This is Likely to be a far more efficient approach, but gpd isnt a bottleneck currently, and standard geojson doesnt
+# include CRS
 PFA_GEODATA = """
 WITH g AS (
     SELECT
@@ -40,13 +42,17 @@ WITH g AS (
     FROM force_boundaries
     WHERE PFA23NM = ?
 )
-SELECT
-    spatial_unit,
-    name,
-    area,
-    ST_X(ST_Centroid(geometry)),
-    ST_Y(ST_Centroid(geometry)),
-    ST_AsGeoJson(geometry)
+SELECT json_object(
+    'type', 'Feature',
+    'geometry', ST_AsGeoJSON(geometry)::json,
+    'properties', json_object(
+        'spatial_unit', spatial_unit,
+        'name', name,
+        'area', area,
+        'lon', ST_X(ST_Centroid(geometry)),
+        'lat', ST_Y(ST_Centroid(geometry))
+    )
+) AS feature
 FROM g
 """
 

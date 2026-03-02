@@ -72,11 +72,15 @@ docker run -p5000:5000 --mount type=bind,source=../data,target=/mnt/data \
   ghcr.io/safer-streets/safer-streets-api
 
 docker run -p8000:8000 --mount type=bind,source=../data,target=/mnt/data \
+  --network="host" \
   -e SAFER_STREETS_DATA_DIR=/mnt/data \
   -e SAFER_STREETS_API_URL=http://localhost:5000 \
   -e SAFER_STREETS_API_KEY=$SAFER_STREETS_API_KEY \
   ghcr.io/safer-streets/safer-streets-apps
 ```
+
+NB `--network="host"` is required when running locally - localhost would otherwise refer to the safer-streets-apps
+container
 
 (On Azure, mount storage (Settings → Configuration → Path Mappings) and set the environment variable appropriately.
 Also ensure the API env vars are set.)
