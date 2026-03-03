@@ -1,5 +1,8 @@
 # safer-streets-apps
 
+- Crime GeoData API
+- Crime Explorer App
+
 ## Install
 
 ```sh
@@ -24,7 +27,7 @@ SAFER_STREETS_DATA_DIR=<insert-here> uv run streamlit run src/safer_streets_apps
 
 ### API
 
-From the activated venv, run a local dev API (using port 5000 to avoid conflicting with streamlit on 8000), picking up
+Run a local dev API (using port 5000 to avoid conflicting with streamlit on 8000), picking up
 the default data dir:
 
 ```sh
@@ -34,26 +37,24 @@ uv run fastapi dev src/safer_streets_apps/fastapi/app.py --port 5000
 Use the [API doc page](http://localhost:5000/docs) to test the endpoints or use `curl`, e.g.
 
 ```sh
-curl 'http://localhost:5000/pfa_area?force=West%20Yorkshire' \
+curl 'http://localhost:5000/pfa_geodata?force=West%20Yorkshire' \
   -H 'accept: application/json' -H 'x-api-key: '$SAFER_STREETS_API_KEY
 ```
 
 ## Containers
 
-TODO docker compose...
-
-### Prerequisites
-
-Build a safer-streets-core wheel and copy it to this folder (use `uv build`).
-
-This currently relies on temporary manual workarounds:
-
-- Build a wheel for safer-streets-core and copy it to here
-- Make copies of a subset of the input datasets and place them in `./data-local`
+TODO docker compose?
 
 ### Build
 
-NB this includes the `data-local` folder (West Yorkshire only) and the Dockerfile hard-codes this location
+Build the containers with this script:
+
+```sh
+uv run ./build-images.sh
+```
+
+NB this script builds a safer-streets-core wheel from the local copy (using `uv build`) and copies it to this folder so that it can be installed into each image.
+
 
 ```sh
 docker build -f Dockerfile.api -t ghcr.io/safer-streets/safer-streets-api .
@@ -96,9 +97,6 @@ docker push ghcr.io/safer-streets/safer-streets-apps
 
 ## Note
 
-- The existing hosted demo app (including data) is on a dedicated branch (streamlit) in the safer-streets-eda repo. **Do
-not delete (yet)!**
-
 - To (re)generate an API key and its hash:
 
   ```sh
@@ -112,7 +110,7 @@ not delete (yet)!**
 - [ ] Docker-compose implementation with
 - [X] full datasets on the cloud or in a volume...
 - [X] ...then remove redundant demo branch
-- [ ] improve UX
+- [X] improve UX
 
 ## References
 
