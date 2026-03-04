@@ -114,8 +114,9 @@ The following parameters can be set:
 - lookback window (6, 12, 18 or 24 months)
 - look-forward window (1, 3, or 12 months)
 - reference month (the start of the look-forward period)
-- number of hotspots per Force (1, 2, or 5 nationally or 1, 2, 5, 20, or 50 per force)
-- constrain hotspots (i.e. the top N in each force, or the equivalent number or hotspots nationally)
+- number of hotspots per Force (1, 2, 5, 10, 20, or 50 per force)
+- constrain hotspots (i.e. the top N in each force, in proportion to the size of the force (officer headcount) or the
+equivalent number or hotspots nationally)
 
 The zoomable map displays the hotspot hex cells in red alongside the PFA boundaries. Greyed out forces indicate
 incomplete or missing data.
@@ -161,7 +162,7 @@ incomplete or missing data.
 
     st.session_state.hotspots = st.sidebar.select_slider(
         "Number of hotspots per force",
-        options=[1, 2, 5, 20, 50],
+        options=[1, 2, 5, 10, 20, 50],
         value=st.session_state.hotspots,
         help="Total hotspots will be this number multiplied by the number of forces",
     )
