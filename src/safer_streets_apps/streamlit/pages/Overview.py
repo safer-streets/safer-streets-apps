@@ -16,13 +16,12 @@ from safer_streets_core.utils import (
     Force,
     data_dir,
     fix_force_name,
-    load_crime_data,
     monthgen,
 )
 
 from safer_streets_apps.streamlit.common import latest_month
 
-st.set_page_config(layout="wide", page_title="Crime Hotspots", page_icon="👮")
+st.set_page_config(layout="wide", page_title="Crime Overview", page_icon="👮")
 st.logo("./assets/safer-streets-small.png", size="large")
 
 load_dotenv()
@@ -43,21 +42,8 @@ REF_LON = -2.0
 
 
 @st.cache_data
-def get_crime_counts(crime_type: str) -> pd.DataFrame:
-    return (
-        pd.concat(
-            [
-                load_crime_data(f, MONTHS, filters={"Crime type": crime_type})
-                .Month.value_counts()
-                .sort_index()
-                .rename(f)
-                for f in FORCES
-            ],
-            axis=1,
-        )
-        .fillna(0)
-        .astype(int)
-    )
+def get_crime_counts() -> pd.DataFrame:
+    return pd.read_parquet(data_dir() / f"pfa-crime-counts-{latest_month()}.parquet").sort_index()
 
 
 @st.cache_data
@@ -82,35 +68,43 @@ def main() -> None:
 
     st.title("Crime Explorer - Overview")
 
-    st.markdown("## Highlighting ...")
+    st.markdown("## Monthly crime counts by police force over the last 3 years")
 
     with st.expander("More info..."):
-        st.markdown("Testing graphs embedded in tooltips")
+        st.markdown(
+            "Useful for checking consistency in data collection in the public crime data across "
+            "forces, and identifying trends or anomalies in crime counts over time. "
+            "Also showcases how to embed graphs in tooltips :wink:"
+        )
 
     st.sidebar.header("Overview")
 
     crime_type = st.sidebar.selectbox("Crime type", get_args(CrimeType), index=5)
 
-    st.write(crime_type)
+    all_data = get_crime_counts()
 
     try:
         with st.spinner("Loading crime data..."):
-            data = get_crime_counts(crime_type)
-
             active_pfa_boundaries, missing_pfa_boundaries = simplified_pfa_boundaries()
 
-            graphs = []
+            graphs = pd.Series(index=FORCES, dtype="object", name="graph")
             for f in FORCES:
-                fig, _ = plt.subplots()
-                data[f].plot.bar(ax=fig.gca())
+                fig, ax = plt.subplots(figsize=(5, 3))
+                data = all_data.loc[(crime_type, f)].sort_index()
+
+                data.plot.bar(ax=ax, title=f"{f}: {crime_type} counts by month", legend=False)
+                labels = [m if i % 3 == 2 else "" for i, m in enumerate(data.index)]
+                ax.set_xticklabels(labels, rotation=45, ha="right")
 
                 buffer = BytesIO()
                 fig.savefig(buffer, format="png", bbox_inches="tight")  # , dpi=100)
                 plt.close(fig)
                 buffer.seek(0)
                 b64 = b64encode(buffer.getvalue()).decode("ascii")
-                graphs.append(f"data:image/png;base64,{b64}")
-            active_pfa_boundaries["graph"] = graphs
+                graphs.loc[fix_force_name(f)] = f"data:image/png;base64,{b64}"
+
+            active_pfa_boundaries = active_pfa_boundaries.merge(graphs, left_on="PFA23NM", right_index=True)
+            # st.dataframe(graphs)
 
         # render map
         view_state = pdk.ViewState(
@@ -146,10 +140,11 @@ def main() -> None:
         )
 
         tooltip = {
-            "html": """
-                    <b>{PFA23NM}</b><br/>
-                    <img src="{graph}" width="240", height="135"/>
-                    """
+            "html": '<img src="{graph}" width="300"/>',
+            "style": {
+                "padding": "1px",
+                "border-radius": "0px",
+            },
         }
 
         st.pydeck_chart(
