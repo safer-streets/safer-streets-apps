@@ -1,5 +1,5 @@
 AGGREGATE_TO_HEX = """
-CREATE TABLE crime_counts_hex AS
+CREATE TABLE IF NOT EXISTS crime_counts_hex AS
 SELECT
     h.spatial_unit AS spatial_unit,
     c.crime_type AS crime_type,
@@ -15,7 +15,7 @@ GROUP BY
 
 
 AGGREGATE_TO_OA21 = """
-CREATE TABLE crime_counts_oa AS
+CREATE TABLE IF NOT EXISTS crime_counts_oa AS
 SELECT
     h.OA21CD AS spatial_unit,
     c.crime_type AS crime_type,
@@ -232,6 +232,42 @@ FROM geog
 LEFT JOIN crime_data c ON ST_Intersects(geog.geometry, c.geometry)
 WHERE c.month IN $months AND c.crime_type IN $crime_types
 GROUP BY spatial_unit, month, crime_type
+"""
+
+# NB use fix_force_name() for first force, tokenise_force_name()
+PFA_ETH_PROPS = """
+WITH h AS (
+    SELECT unnest(h3_polygon_wkt_to_cells(
+        ST_AsText(ST_Transform(geometry, 'EPSG:27700', 'EPSG:4326', always_xy := true)), ?)) AS id
+    FROM force_boundaries WHERE pfa23nm = ?
+),
+h3 AS (
+    SELECT
+        lower(hex(id)) as spatial_unit,
+        ST_Transform(ST_GeomFromWKB(
+            h3_cell_to_boundary_wkb(id)), 'EPSG:4326', 'EPSG:27700', always_xy := true) AS geometry
+    FROM h
+),
+ap AS (
+    SELECT
+        C2021_ETH_20_NAME, C2021_AGE_6_NAME, C_SEX_NAME, geometry
+    FROM assigned_population
+    WHERE pfa = ?
+),
+counts AS (
+    SELECT
+        h3.spatial_unit AS spatial_unit,
+        ap.C2021_ETH_20_NAME AS eth,
+        COUNT(ap.C2021_ETH_20_NAME) AS count
+    FROM
+        h3
+    LEFT JOIN
+        ap ON ST_Intersects(h3.geometry, ap.geometry)
+    GROUP BY
+        spatial_unit, eth
+)
+SELECT spatial_unit, eth, count::DOUBLE / NULLIF(sum(count) OVER (PARTITION BY spatial_unit), 0) AS proportion
+FROM counts
 """
 
 

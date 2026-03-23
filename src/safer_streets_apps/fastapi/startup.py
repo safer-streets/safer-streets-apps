@@ -14,9 +14,6 @@ N_MONTHS = 36
 def init_db(con: DuckDBPyConnection) -> None:
     logging.info("Initialising database")
 
-    # H3 extension
-    con.execute("INSTALL h3 FROM community;LOAD h3;")
-
     # force boundaries
     add_table_from_shapefile(
         con,
@@ -51,7 +48,7 @@ def init_db(con: DuckDBPyConnection) -> None:
 
     # hex grid
     con.execute(
-        f"CREATE TABLE hex200 AS SELECT spatial_unit, geometry FROM '{data_dir() / 'england_wales_HEX-200_untrimmed.parquet'}'"
+        f"CREATE TABLE IF NOT EXISTS hex200 AS SELECT spatial_unit, geometry FROM '{data_dir() / 'england_wales_HEX-200_untrimmed.parquet'}'"
     )
     logging.info("Initialised spatial data")
 
@@ -61,7 +58,7 @@ def init_db(con: DuckDBPyConnection) -> None:
     all_files = Itr(data_dir().glob(f"extracted/{month}*street.parquet") for month in timeline).flatten()
 
     con.execute(f"""
-        CREATE TABLE crime_data AS SELECT
+        CREATE TABLE IF NOT EXISTS crime_data AS SELECT
             Month AS month,
             "Reported by" AS reporter,
             "Falls within" AS force,
@@ -73,24 +70,9 @@ def init_db(con: DuckDBPyConnection) -> None:
 
     logging.info("Initialised crime data")
 
-    # transform to counts
-    cache_file = data_dir() / f"duckdb_cache/crime_counts_hex_{latest_month()}.parquet"
-    if not cache_file.exists():
-        logging.info("Creating hex crime count table")
-        con.execute(sql.AGGREGATE_TO_HEX)
-        con.sql("SELECT * FROM crime_counts_hex").fetchdf().to_parquet(cache_file)
-    else:
-        logging.info("Using cached hex crime count table")
-        con.execute(f"CREATE TABLE crime_counts_hex AS SELECT * FROM read_parquet('{cache_file}')")
-
-    cache_file = data_dir() / f"duckdb_cache/crime_counts_oa_{latest_month()}.parquet"
-    if not cache_file.exists():
-        logging.info("Creating OA21 crime count table")
-        con.execute(sql.AGGREGATE_TO_OA21)
-        con.sql("SELECT * FROM crime_counts_oa").fetchdf().to_parquet(cache_file)
-    else:
-        logging.info("Using cached OA21 crime count table")
-        con.execute(f"CREATE TABLE crime_counts_oa AS SELECT * FROM read_parquet('{cache_file}')")
+    # these are compute-intensive so a pre-calculated
+    con.execute(sql.AGGREGATE_TO_HEX)
+    con.execute(sql.AGGREGATE_TO_OA21)
 
     logging.info("Initialised crime count data")
     logging.info("Database initialisation complete")

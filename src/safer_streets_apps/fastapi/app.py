@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends, FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from itrx import Itr
-from safer_streets_core.database import ephemeral_duckdb_spatial_connector
+from safer_streets_core.database import duckdb_spatial_connector
 from safer_streets_core.spatial import CensusGeography, SpatialUnit
-from safer_streets_core.utils import CrimeType, Force, Month, fix_force_name, latest_month, monthgen
+from safer_streets_core.utils import CrimeType, Force, Month, data_dir, fix_force_name, latest_month, monthgen
 from shapely import wkt
 
 import safer_streets_apps.fastapi.sql as sql
@@ -29,7 +29,7 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    app.state.con = ephemeral_duckdb_spatial_connector()
+    app.state.con = duckdb_spatial_connector(data_dir() / "duck.db")
     init_db(app.state.con)
     yield
     app.state.con.close()
