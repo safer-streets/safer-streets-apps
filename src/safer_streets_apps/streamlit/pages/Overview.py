@@ -4,22 +4,26 @@ from io import BytesIO
 from typing import Any, get_args
 
 import geopandas as gpd
-import matplotlib.pyplot as plt
 import pandas as pd
+import plotnine as p9
 import pydeck as pdk
 import streamlit as st
 from dotenv import load_dotenv
 from itrx import Itr
+from safer_streets_core.charts import DEFAULT_COLOUR
 from safer_streets_core.utils import (
     CATEGORIES,
     CrimeType,
     Force,
+    Month,
     data_dir,
     fix_force_name,
     monthgen,
 )
 
-from safer_streets_apps.streamlit.common import latest_month
+# not updated past 2025-12
+# from safer_streets_apps.streamlit.common import latest_month
+latest_month = Month(2025, 12)
 
 st.set_page_config(layout="wide", page_title="Crime Overview", page_icon="👮")
 st.logo("./assets/safer-streets-small.png", size="large")
@@ -43,7 +47,7 @@ REF_LON = -2.0
 
 @st.cache_data
 def get_crime_counts() -> pd.DataFrame:
-    return pd.read_parquet(data_dir() / f"pfa-crime-counts-{latest_month()}.parquet").sort_index()
+    return pd.read_parquet(data_dir() / f"pfa-crime-counts-{latest_month}.parquet").sort_index()
 
 
 @st.cache_data
@@ -59,7 +63,7 @@ def simplified_pfa_boundaries() -> tuple[dict[str, Any], dict[str, Any]]:
     )
 
 
-MONTHS = Itr(monthgen(latest_month(), backwards=True)).take(N_MONTHS).rev().collect()
+MONTHS = Itr(monthgen(latest_month, backwards=True)).take(N_MONTHS).rev().collect()
 
 
 def main() -> None:
@@ -89,16 +93,25 @@ def main() -> None:
 
             graphs = pd.Series(index=FORCES, dtype="object", name="graph")
             for f in FORCES:
-                fig, ax = plt.subplots(figsize=(5, 3))
+                # fig, ax = plt.subplots(figsize=(5, 3))
                 data = all_data.loc[(crime_type, f)].sort_index()
 
-                data.plot.bar(ax=ax, title=f"{f}: {crime_type} counts by month", legend=False)
-                labels = [m if i % 3 == 2 else "" for i, m in enumerate(data.index)]
-                ax.set_xticklabels(labels, rotation=45, ha="right")
+                fig = (
+                    p9.ggplot(data.reset_index(), p9.aes(x="month", y="count"))
+                    + p9.geom_bar(stat="identity", fill=DEFAULT_COLOUR)
+                    + p9.theme_minimal()
+                    + p9.labs(title=f"{f}: {crime_type} counts by month", x="Month", y="Count")
+                    + p9.scale_x_discrete(labels=[m if i % 3 == 2 else " " for i, m in enumerate(data.index)])
+                    + p9.theme(axis_text_x=p9.element_text(rotation=45, ha="right"))
+                )
+
+                # data.plot.bar(ax=ax, title=f"{f}: {crime_type} counts by month", legend=False)
+                # labels = [m if i % 3 == 2 else "" for i, m in enumerate(data.index)]
+                # ax.set_xticklabels(labels, rotation=45, ha="right")
 
                 buffer = BytesIO()
-                fig.savefig(buffer, format="png", bbox_inches="tight")  # , dpi=100)
-                plt.close(fig)
+                fig.save(buffer, format="png", bbox_inches="tight", dpi=150)
+                # plt.close(fig)
                 buffer.seek(0)
                 b64 = b64encode(buffer.getvalue()).decode("ascii")
                 graphs.loc[fix_force_name(f)] = f"data:image/png;base64,{b64}"

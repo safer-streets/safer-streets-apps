@@ -2,15 +2,11 @@ from typing import cast, get_args
 
 import pydeck as pdk
 import streamlit as st
-from safer_streets_core.utils import (
-    CATEGORIES,
-    DEFAULT_FORCE,
-    Force,
-    Month,
-)
+from itrx import Itr
+from safer_streets_core.utils import CATEGORIES, DEFAULT_FORCE, Force, Month, monthgen
 
 from safer_streets_apps.streamlit.common import (
-    all_months,
+    # all_months,
     cache_demographic_data,
     date_range,
     geographies,
@@ -20,6 +16,8 @@ from safer_streets_apps.streamlit.common import (
     get_ethnicity_totals,
     get_ordered_counts,
 )
+
+all_months = Itr(monthgen(Month(2025, 12), backwards=True)).take(36).collect()
 
 st.set_page_config(layout="wide", page_title="Crime Capture", page_icon="👮")
 st.logo("./assets/safer-streets-small.png", size="large")

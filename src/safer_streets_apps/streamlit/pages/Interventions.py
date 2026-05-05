@@ -38,13 +38,15 @@ REF_LON = -2.0
 
 @st.cache_data
 def get_counts(constraint: Constraint) -> pd.DataFrame:
+    # latest mont we have data for is 2025-12
+    latest_month = "2025-12"
     match constraint:
         case "National":
-            return pd.read_parquet(data_dir() / f"national_hotspots_{latest_month()}.parquet")
+            return pd.read_parquet(data_dir() / f"national_hotspots_{latest_month}.parquet")
         case "Equal":
-            return pd.read_parquet(data_dir() / f"force_hotspots_{latest_month()}.parquet")
+            return pd.read_parquet(data_dir() / f"force_hotspots_{latest_month}.parquet")
         case "Size":
-            return pd.read_parquet(data_dir() / f"headcount_hotspots_{latest_month()}.parquet")
+            return pd.read_parquet(data_dir() / f"headcount_hotspots_{latest_month}.parquet")
 
 
 # @st.cache_data
@@ -70,7 +72,8 @@ def simplified_pfa_boundaries() -> tuple[dict[str, Any], dict[str, Any]]:
     )
 
 
-MONTHS = Itr(monthgen(latest_month(), backwards=True)).take(N_MONTHS).rev().map(str).collect()
+# TO 2025-12
+MONTHS = Itr(monthgen(Month(2025, 12), backwards=True)).take(N_MONTHS).rev().map(str).collect()
 
 
 def main() -> None:

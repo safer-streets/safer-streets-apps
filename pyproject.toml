@@ -9,6 +9,9 @@ dependencies = [
     "safer-streets-core",
     "streamlit>=1.48.0",
     "fastapi[standard]",
+    "plotnine>=0.15.3",
+    "marimo>=0.21.1",
+    "pyzmq>=27.1.0",
 ]
 
 [build-system]
