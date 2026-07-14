@@ -1,23 +1,26 @@
+import json
 import logging
-from collections import defaultdict
 from contextlib import asynccontextmanager
-from typing import Annotated, Any, AsyncGenerator
+from typing import Annotated, AsyncGenerator
 
 import geopandas as gpd
+from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from itrx import Itr
-from safer_streets_core.database import duckdb_spatial_connector
+from safer_streets_core.database import duckdb_connector
 from safer_streets_core.spatial import CensusGeography, SpatialUnit
-from safer_streets_core.utils import CrimeType, Force, Month, data_dir, fix_force_name, latest_month, monthgen
+from safer_streets_core.utils import CrimeType, Force, Month, fix_force_name, latest_month, monthgen
 from shapely import wkt
 
 import safer_streets_apps.fastapi.sql as sql
 from safer_streets_apps.fastapi import impl
 from safer_streets_apps.fastapi.auth import handle_api_key
 from safer_streets_apps.fastapi.models import CrimeCountsRequest, DfJson, FeaturesRequest, MonthStr
-from safer_streets_apps.fastapi.startup import init_db
+
+load_dotenv()
+
 
 # Configure basic logging
 logging.basicConfig(
@@ -29,8 +32,9 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    app.state.con = duckdb_spatial_connector(data_dir() / "duck.db")
-    init_db(app.state.con)
+    # app.state.con = duckdb_spatial_connector(data_dir() / "duck.db")
+    # init_db(app.state.con)
+    app.state.con = duckdb_connector(azure=True)
     yield
     app.state.con.close()
 
@@ -102,45 +106,21 @@ async def favicon():
 
 
 @auth_routes.get("/diagnostics")
-async def diagnostics() -> dict[str, Any]:
-    memory = app.state.con.sql("SELECT SUM(memory_usage_bytes) / 1024 ** 2 FROM duckdb_memory();").fetchone()[0]
-
-    schema = defaultdict(dict)
-
-    for col in app.state.con.sql(sql.TABLE_SCHEMAS).fetchall():
-        schema[col[0]][col[1]] = col[2]
-
-    return {"memory (MB)": memory, "table_schemas": schema}
+async def diagnostics() -> DfJson:
+    # arrow gives native python types (datetime, int) which FastAPI serialises (dates -> ISO 8601);
+    # pandas Timestamp/int64 would break JSONResponse's json.dumps
+    return app.state.con.sql(sql.TABLE_METADATA.format(index=sql.INDEX)).to_arrow_table().to_pylist()
 
 
 @auth_routes.get("/pfa_geodata")
 async def pfa_geodata(force: Force) -> Response:
     raw_data = app.state.con.sql(
-        sql.PFA_GEODATA,
+        sql.PFA_GEODATA.format(extract=sql.EXTRACT),
         params=(fix_force_name(force),),
     ).fetchone()
 
-    return Response(raw_data[0] if len(raw_data) > 0 else {})
-
-
-@auth_routes.post("/hexes", deprecated=True)
-async def hexes(ids: list[int], latlon: Annotated[bool, Query] = False) -> Response:
-    """
-    Return geometries for requested hex features.
-    Queries to fetch all hexes for a PFA can be too slow/large
-    Will return BNG (EPSG:27700) coordinates, or degrees (EPSG:4326) if `latlon` is set to true
-
-    **Deprecated: use the `/features` endpoint**
-    """
-    raw_hexes = app.state.con.sql(sql.HEX_FEATURES, params=(ids,)).fetchdf()
-    # TODO is there a more efficient way of rendering GeoJSON, including properties and CRS,
-    # without going via geopandas?
-    hexes = gpd.GeoDataFrame(
-        raw_hexes[["spatial_unit"]], geometry=raw_hexes.wkt.apply(wkt.loads), crs="epsg:27700"
-    ).set_index("spatial_unit", drop=True)
-    if latlon:
-        hexes = hexes.to_crs(epsg=4326)
-    return Response(content=hexes.to_json(), media_type="application/json")
+    # duckdb returns the JSON column as a string; parse it or the response is double-encoded
+    return JSONResponse(json.loads(raw_data[0]) if raw_data else {})
 
 
 @auth_routes.post("/features")
@@ -159,12 +139,12 @@ async def h3(force: Force, resolution: int, latlon: Annotated[bool, Query] = Fal
     Return H3 grid for a given PFA and resolution (e.g 7 ~ 5km², 8 ~ 0.7km², 9 ~ 0.1km²)
     Will return BNG (EPSG:27700) coordinates or degrees (EPSG:4326) if `latlon` is set to true
     """
+    if not 0 <= resolution <= 15:
+        raise ValueError("resolution must be between 0 and 15")
+
     raw = app.state.con.sql(
-        sql.PFA_H3_GRID,
-        params=(
-            resolution,
-            fix_force_name(force),
-        ),
+        sql.PFA_H3_GRID.format(extract=sql.EXTRACT, res=resolution),
+        params={"pfa": fix_force_name(force)},
     ).fetchdf()
 
     features = gpd.GeoDataFrame(raw[["spatial_unit"]], geometry=raw.wkt.apply(wkt.loads), crs="epsg:27700").set_index(
@@ -180,24 +160,13 @@ async def h3(force: Force, resolution: int, latlon: Annotated[bool, Query] = Fal
 async def census_geographies(geography: CensusGeography, force: Force) -> Response:
     """Return geojson containing census geographies"""
     raw = app.state.con.sql(
-        sql.CENSUS_GEOGRAPHIES.format(geography=geography), params=(fix_force_name(force),)
+        sql.CENSUS_GEOGRAPHIES.format(extract=sql.EXTRACT, parquet=sql.CENSUS_PARQUET[geography]),
+        params=(fix_force_name(force),),
     ).fetchdf()
     features = gpd.GeoDataFrame(raw["spatial_unit"], geometry=raw.wkt.apply(wkt.loads), crs="epsg:27700").set_index(
         "spatial_unit", drop=True
     )
     return Response(content=features.to_json(), media_type="application/json")
-
-
-@auth_routes.get("/hex_counts", deprecated=True)
-async def hex_counts(force: Force, category: CrimeType) -> DfJson:
-    """
-    Returns counts for crimes aggregated to hexes for given force and category for all months by spatial unit id
-
-    **Deprecated: use the crime_counts endpoint**
-    """
-    return (
-        app.state.con.sql(sql.HEX_COUNTS_OLD, params=(fix_force_name(force), category)).fetch_arrow_table().to_pylist()
-    )
 
 
 # TODO potentially deprecate in favour of crime_counts
@@ -212,8 +181,11 @@ async def census_counts(geography: CensusGeography, force: Force, category: Crim
     if geography != "OA21":
         raise ValueError("only implemented for OA21. TODO: aggregate to L/MSOA21")
     return (
-        app.state.con.sql(sql.CENSUS_COUNTS.format(geography=geography), params=(fix_force_name(force), category))
-        .fetch_arrow_table()
+        app.state.con.sql(
+            sql.CENSUS_COUNTS.format(extract=sql.EXTRACT, parquet=sql.CENSUS_PARQUET[geography]),
+            params=(fix_force_name(force), category),
+        )
+        .to_arrow_table()
         .to_pylist()
     )
 
@@ -289,21 +261,24 @@ async def hotspots(
     month: Annotated[str, Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")],
     lookback: Annotated[int, Query(ge=1, le=12)] = 1,
     n_hotspots: Annotated[int, Query(ge=1)],
+    resolution: int = 9,
 ) -> Response:
     """
-    Return geojson of top `n_hotpots` with features (200m hexes) and counts of crimes of a given category in the period
-    requested, for a specific force (or England & Wales if no force specified).
+    Return geojson of top `n_hotpots` with features (H3 cells, default resolution 9 ~ 0.1km²) and counts of crimes of
+    a given category in the period requested, for a specific force (or England & Wales if no force specified).
 
     The period is the `lookback` months up to and including `month`
     """
+    if resolution not in sql.H3_RESOLUTIONS:
+        raise ValueError(f"resolution must be one of {sql.H3_RESOLUTIONS}")
 
     months = Itr(monthgen(Month.parse_str(month), backwards=True)).take(lookback).map(str).collect()
 
     if not force:
-        query = sql.NATIONAL_HOTSPOTS_HEX
+        query = sql.NATIONAL_HOTSPOTS_H3.format(transform=sql.TRANSFORM, res=resolution)
         params = [category, months, n_hotspots]
     else:
-        query = sql.FORCE_HOTSPOTS_HEX
+        query = sql.FORCE_HOTSPOTS_H3.format(transform=sql.TRANSFORM, extract=sql.EXTRACT, res=resolution)
         params = [fix_force_name(force), category, months, n_hotspots]
 
     hotspots = app.state.con.sql(query, params=params).fetchdf()

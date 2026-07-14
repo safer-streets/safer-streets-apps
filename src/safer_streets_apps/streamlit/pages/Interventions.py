@@ -10,7 +10,7 @@ from itrx import Itr
 from safer_streets_core.api_helpers import fetch_gdf
 from safer_streets_core.utils import CATEGORIES, Force, Month, data_dir, fix_force_name, monthgen
 
-from safer_streets_apps.streamlit.common import date_range, get_oac, latest_month
+from safer_streets_apps.streamlit.common import date_range, get_oac
 
 st.set_page_config(layout="wide", page_title="Crime Hotspots", page_icon="👮")
 st.logo("./assets/safer-streets-small.png", size="large")
