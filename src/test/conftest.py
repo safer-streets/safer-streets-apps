@@ -22,6 +22,7 @@ TEST_API_KEY = "5afe57ee75"
 
 FORCE = "West Yorkshire"
 PFA_CODE = "E23000010"
+LAD_CODE = "E08000035"
 
 # 10km x 10km BNG square split vertically into two output areas at OA_SPLIT
 XMIN, YMIN, XMAX, YMAX = 425_000, 430_000, 435_000, 440_000
@@ -52,6 +53,13 @@ def _build_data(root: Path) -> None:
             FROM (VALUES {crime_rows}) t(crime_type, _month, easting, northing)
         );
         COPY crime TO '{extract}/crime_data.parquet' (FORMAT parquet);
+
+        -- each crime tagged with the geography codes containing it (OA depends on which side of the split)
+        CREATE TABLE crime_geogs AS
+        SELECT crime_type, _month AS month, latitude, longitude,
+               '{PFA_CODE}' AS pfa23cd, '{LAD_CODE}' AS lad24cd, 'E02000001' AS msoa21cd, 'E01000001' AS lsoa21cd,
+               CASE WHEN ST_X(geom) < {OA_SPLIT} THEN 'E00000001' ELSE 'E00000002' END AS oa21cd
+        FROM crime;
 
         COPY (
             SELECT '{PFA_CODE}' AS spatial_id, '{FORCE}' AS pfa23nm,
@@ -88,8 +96,17 @@ def _build_data(root: Path) -> None:
             FROM crime
             GROUP BY ALL;
             COPY counts_{res} TO '{transform}/crime_counts_h3_{res}.parquet' (FORMAT parquet);
-            COPY (SELECT DISTINCT spatial_id, '{PFA_CODE}' AS pfa23cd FROM counts_{res})
-            TO '{transform}/h3_{res}_geogs.parquet' (FORMAT parquet);
+            COPY (
+                SELECT DISTINCT
+                    lower(hex(h3_latlng_to_cell(latitude, longitude, {res}))) AS spatial_id,
+                    pfa23cd, lad24cd, msoa21cd, lsoa21cd, oa21cd
+                FROM crime_geogs
+            ) TO '{transform}/h3_{res}_geogs.parquet' (FORMAT parquet);
+        """)
+    for key in ("pfa23cd", "lad24cd", "msoa21cd", "lsoa21cd", "oa21cd"):
+        con.execute(f"""
+            COPY (SELECT {key} AS spatial_id, crime_type, month, COUNT(*) AS count FROM crime_geogs GROUP BY ALL)
+            TO '{transform}/crime_counts_{key}.parquet' (FORMAT parquet);
         """)
     con.close()
 

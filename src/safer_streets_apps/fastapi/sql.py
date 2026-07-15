@@ -6,10 +6,12 @@ TRANSFORM = "az://phase2/transform"
 INDEX = "az://phase2/index.parquet"
 
 # geography -> boundary parquet whose `spatial_id` column is that geography's code (e.g. OA21 -> E00...)
-CENSUS_PARQUET = {
+ADMIN_CENSUS_PARQUET = {
     "OA21": "output_areas_2021",
     "LSOA21": "lsoa_2021",
     "MSOA21": "msoa_2021",
+    "LAD24": "local_authority_districts",
+    "PFA23": "police_force_areas",
 }
 
 # H3 resolutions for which crime counts / geography lookups are precomputed on Azure
@@ -46,15 +48,20 @@ FROM g
 # H3 cell boundaries are computed on the fly from the cell ids (no stored geometry needed)
 H3_FEATURES = """
 WITH ids AS (
-SELECT * AS spatial_unit FROM unnest(?)
+SELECT * AS spatial_id FROM unnest(?)
 )
-SELECT spatial_unit, h3_cell_to_boundary_wkt(spatial_unit) AS wkt FROM ids
+SELECT spatial_id, h3_cell_to_boundary_wkt(spatial_id) AS wkt FROM ids
 """
 
-CENSUS_FEATURES = """
-SELECT spatial_id AS spatial_unit, ST_AsText(geom) AS wkt
+ADMIN_CENSUS_FEATURES = """
+SELECT spatial_id, ST_AsText(geom) AS wkt
 FROM read_parquet('{extract}/{parquet}.parquet')
 WHERE spatial_id IN ?
+"""
+
+ALL_ADMIN_FEATURES = """
+SELECT spatial_id, ST_AsText(geom) AS wkt
+FROM read_parquet('{extract}/{parquet}.parquet')
 """
 
 # H3 grid over a police force area. `h3_polygon_wkt_to_cells` only handles single polygons, so the
@@ -143,7 +150,7 @@ FROM h
 
 # H3 crime counts come straight from the precomputed table, filtered to the force's cells.
 H3_CRIME_COUNTS = """
-SELECT c.spatial_id AS spatial_unit, c.crime_type AS crime_type, c.month AS month, c.count AS count
+SELECT c.spatial_id, c.crime_type AS crime_type, c.month AS month, c.count AS count
 FROM read_parquet('{transform}/crime_counts_h3_{res}.parquet') c
 WHERE c.spatial_id IN (
     SELECT spatial_id FROM read_parquet('{transform}/h3_{res}_geogs.parquet')
@@ -154,21 +161,39 @@ WHERE c.spatial_id IN (
 AND c.month IN $months AND c.crime_type IN $crime_types
 """
 
-# census crime counts are spatial-joined against the boundaries at request time
+# Stat/Admin geog crime counts come straight from the precomputed table, filtered to the force's cells.
 CENSUS_CRIME_COUNTS = """
-WITH force AS (
-    SELECT geom FROM read_parquet('{extract}/police_force_areas.parquet') WHERE pfa23nm = $pfa
-),
-b AS (
-    SELECT b.spatial_id, b.geom
-    FROM read_parquet('{extract}/{parquet}.parquet') b, force
-    WHERE ST_Intersects(b.geom, force.geom)
+SELECT c.spatial_id, c.crime_type AS crime_type, c.month AS month, c.count AS count
+FROM read_parquet('{transform}/crime_counts_{geography}cd.parquet') c
+WHERE c.spatial_id IN (
+    SELECT DISTINCT {geography}cd FROM read_parquet('{transform}/h3_8_geogs.parquet')
+    WHERE pfa23cd = (
+        SELECT spatial_id FROM read_parquet('{extract}/police_force_areas.parquet') WHERE pfa23nm = $pfa
+    )
 )
-SELECT b.spatial_id AS spatial_unit, c.crime_type AS crime_type, c._month AS month, COUNT(*) AS count
-FROM b JOIN read_parquet('{extract}/crime_data.parquet') c
-    ON ST_Intersects(b.geom, ST_Transform(ST_Point(c.longitude, c.latitude), 'EPSG:4326', 'EPSG:27700', always_xy := true))
-WHERE c._month IN $months AND c.crime_type IN $crime_types
-GROUP BY spatial_unit, crime_type, month
+AND c.month IN $months AND c.crime_type IN $crime_types
+"""
+
+
+# Map H3 cells to the ONS geography each most overlaps (precomputed in h3_{res}_geogs)
+H3_GEOG_LOOKUP = """
+SELECT spatial_id, {target}cd AS target_id
+FROM read_parquet('{transform}/h3_{res}_geogs.parquet')
+WHERE spatial_id IN ?
+"""
+
+# Map between non-H3 geographies via their res-8 H3 cells: each source unit is assigned the target
+# code shared by the most of its cells (majority vote, ties broken by code for determinism)
+CENSUS_GEOG_LOOKUP = """
+WITH pairs AS (
+    SELECT {source}cd AS spatial_id, {target}cd AS target_id, COUNT(*) AS n
+    FROM read_parquet('{transform}/h3_8_geogs.parquet')
+    WHERE {source}cd IN ?
+    GROUP BY ALL
+)
+SELECT spatial_id, target_id
+FROM pairs
+QUALIFY ROW_NUMBER() OVER (PARTITION BY spatial_id ORDER BY n DESC, target_id) = 1
 """
 
 

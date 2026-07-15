@@ -18,7 +18,16 @@ class CrimeCountsRequest(BaseModel):
 
 class FeaturesRequest(BaseModel):
     geography: SpatialUnit
-    ids: list[int | str]
+    # if ids not specified, all features are returned (use with care!)
+    ids: list[str] | None = None
+
+
+class GeogLookupRequest(BaseModel):
+    geography: SpatialUnit
+    # required (only) when geography is H3
+    resolution: int | None = None
+    ids: list[str]
+    target: SpatialUnit
 
 
 # TODO tighten up these models

@@ -10,14 +10,20 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from itrx import Itr
 from safer_streets_core.database import duckdb_connector
-from safer_streets_core.spatial import CensusGeography, SpatialUnit
-from safer_streets_core.utils import CrimeType, Force, Month, fix_force_name, latest_month, monthgen
+from safer_streets_core.spatial import AdminGeography, CensusGeography, SpatialUnit
+from safer_streets_core.utils import CrimeType, Force, Month, fix_force_name, monthgen
 from shapely import wkt
 
 import safer_streets_apps.fastapi.sql as sql
 from safer_streets_apps.fastapi import impl
 from safer_streets_apps.fastapi.auth import handle_api_key
-from safer_streets_apps.fastapi.models import CrimeCountsRequest, DfJson, FeaturesRequest, MonthStr
+from safer_streets_apps.fastapi.models import (
+    CrimeCountsRequest,
+    DfJson,
+    FeaturesRequest,
+    GeogLookupRequest,
+    MonthStr,
+)
 
 load_dotenv()
 
@@ -32,8 +38,6 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    # app.state.con = duckdb_spatial_connector(data_dir() / "duck.db")
-    # init_db(app.state.con)
     app.state.con = duckdb_connector(azure=True)
     yield
     app.state.con.close()
@@ -112,8 +116,19 @@ async def diagnostics() -> DfJson:
     return app.state.con.sql(sql.TABLE_METADATA.format(index=sql.INDEX)).to_arrow_table().to_pylist()
 
 
+@auth_routes.get("/time_window")
+async def time_window() -> JSONResponse:
+    """
+    Returns the available months in the crime data
+    """
+    months = app.state.con.sql(
+        "SELECT DISTINCT _month FROM read_parquet('az://phase2/extract/crime_data.parquet') ORDER BY _month"
+    ).fetchall()
+    return JSONResponse(Itr(months).flatten().collect())
+
+
 @auth_routes.get("/pfa_geodata")
-async def pfa_geodata(force: Force) -> Response:
+async def pfa_geodata(force: Force) -> JSONResponse:
     raw_data = app.state.con.sql(
         sql.PFA_GEODATA.format(extract=sql.EXTRACT),
         params=(fix_force_name(force),),
@@ -121,6 +136,18 @@ async def pfa_geodata(force: Force) -> Response:
 
     # duckdb returns the JSON column as a string; parse it or the response is double-encoded
     return JSONResponse(json.loads(raw_data[0]) if raw_data else {})
+
+
+@auth_routes.get("/features")
+async def all_features(geography: AdminGeography, latlon: Annotated[bool, Query] = False) -> Response:
+    """
+    Return all the geometries for large-area features (PFA/LAD)
+    Will return BNG (EPSG:27700) coordinates, or degrees (EPSG:4326) if `latlon` is set to true
+    """
+    return Response(
+        content=impl.all_features(app.state.con, geography, latlon).to_json(),
+        media_type="application/json",
+    )
 
 
 @auth_routes.post("/features")
@@ -156,11 +183,31 @@ async def h3(force: Force, resolution: int, latlon: Annotated[bool, Query] = Fal
     return Response(content=features.to_json(), media_type="application/json")
 
 
+@auth_routes.post("/geog_lookup")
+async def geog_lookup(request: GeogLookupRequest) -> dict[str, str]:
+    """
+    Map spatial ids from one geography onto another.
+
+    Args:
+        geography: The source geography of the ids (H3, PFA23, LAD24, MSOA21, LSOA21, OA21).
+        resolution: Required when geography is H3, specifies the H3 resolution level.
+        ids: The spatial ids to map.
+        target: The geography to map onto (PFA23, LAD24, MSOA21, LSOA21, OA21).
+
+    Returns:
+        A JSON object keyed by the input ids, with values the id of the target-geography feature each
+        input most overlaps (directly loadable as a pandas Series). H3 ids are mapped using the
+        precomputed h3_{resolution}_geogs lookup; non-H3 geographies are mapped to each other via their
+        resolution-8 H3 cells (majority vote). Ids not present in the data are omitted.
+    """
+    return impl.geog_lookup(app.state.con, request)
+
+
 @auth_routes.get("/census_geographies")
 async def census_geographies(geography: CensusGeography, force: Force) -> Response:
     """Return geojson containing census geographies"""
     raw = app.state.con.sql(
-        sql.CENSUS_GEOGRAPHIES.format(extract=sql.EXTRACT, parquet=sql.CENSUS_PARQUET[geography]),
+        sql.CENSUS_GEOGRAPHIES.format(extract=sql.EXTRACT, parquet=sql.ADMIN_CENSUS_PARQUET[geography]),
         params=(fix_force_name(force),),
     ).fetchdf()
     features = gpd.GeoDataFrame(raw["spatial_unit"], geometry=raw.wkt.apply(wkt.loads), crs="epsg:27700").set_index(
@@ -182,7 +229,7 @@ async def census_counts(geography: CensusGeography, force: Force, category: Crim
         raise ValueError("only implemented for OA21. TODO: aggregate to L/MSOA21")
     return (
         app.state.con.sql(
-            sql.CENSUS_COUNTS.format(extract=sql.EXTRACT, parquet=sql.CENSUS_PARQUET[geography]),
+            sql.CENSUS_COUNTS.format(extract=sql.EXTRACT, parquet=sql.ADMIN_CENSUS_PARQUET[geography]),
             params=(fix_force_name(force), category),
         )
         .to_arrow_table()
@@ -221,7 +268,7 @@ async def crime_counts_get(
     resolution: int | None = None,
     force: Force,
     category: CrimeType,
-    month: MonthStr | None = None,
+    month: MonthStr,
     lookback: Annotated[int, Query(ge=1, le=36)] = 1,
 ) -> DfJson:
     """
@@ -243,7 +290,7 @@ async def crime_counts_get(
         ValueError: If resolution is not specified for H3 geography or specified for other geographies.
     """
 
-    month_ = Month.parse_str(month) if month else latest_month()
+    month_ = Month.parse_str(month)
     months = Itr(monthgen(month_, backwards=True)).take(lookback).map(str).collect()
 
     query = CrimeCountsRequest(

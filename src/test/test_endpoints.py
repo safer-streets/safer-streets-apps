@@ -1,6 +1,6 @@
 from typing import Any
 
-from conftest import FORCE, PFA_CODE, TEST_API_KEY
+from conftest import FORCE, LAD_CODE, PFA_CODE, TEST_API_KEY
 from fastapi.testclient import TestClient
 
 
@@ -109,7 +109,7 @@ def _h3_cells(client: TestClient, resolution: int) -> list[str]:
         },
     )
     assert response.status_code == 200
-    return sorted({row["spatial_unit"] for row in response.json()})
+    return sorted({row["spatial_id"] for row in response.json()})
 
 
 def test_features_h3(client: TestClient) -> None:
@@ -142,7 +142,7 @@ def test_features_census(client: TestClient) -> None:
 
 
 def test_features_unsupported_geography(client: TestClient) -> None:
-    response = client.post("/features", json={"geography": "GRID", "ids": [1]})
+    response = client.post("/features", json={"geography": "GRID", "ids": ["1"]})
     assert response.status_code == 400
     assert response.json()["error"] == "ValueError"
 
@@ -172,6 +172,66 @@ def test_h3_grid_invalid_resolution(client: TestClient) -> None:
     response = client.get("/h3/16", params={"force": FORCE})
     assert response.status_code == 400
     assert response.json()["error"] == "ValueError"
+
+
+# --- geog_lookup ---
+
+
+def test_geog_lookup_h3(client: TestClient) -> None:
+    cells = _h3_cells(client, 8)
+    response = client.post("/geog_lookup", json={"geography": "H3", "resolution": 8, "ids": cells, "target": "OA21"})
+    assert response.status_code == 200
+    mapping = response.json()
+    # one crime cell in each OA
+    assert sorted(mapping) == cells
+    assert sorted(mapping.values()) == ["E00000001", "E00000002"]
+
+    response = client.post("/geog_lookup", json={"geography": "H3", "resolution": 8, "ids": cells, "target": "MSOA21"})
+    assert response.status_code == 200
+    assert response.json() == dict.fromkeys(cells, "E02000001")
+
+
+def test_geog_lookup_h3_unknown_ids_omitted(client: TestClient) -> None:
+    cells = _h3_cells(client, 9)
+    response = client.post(
+        "/geog_lookup",
+        json={"geography": "H3", "resolution": 9, "ids": [*cells, "ffffffffffffff"], "target": "LSOA21"},
+    )
+    assert response.status_code == 200
+    assert response.json() == dict.fromkeys(cells, "E01000001")
+
+
+def test_geog_lookup_census(client: TestClient) -> None:
+    # non-H3 to non-H3 mappings go via the res-8 H3 cells
+    response = client.post(
+        "/geog_lookup", json={"geography": "OA21", "ids": ["E00000001", "E00000002"], "target": "MSOA21"}
+    )
+    assert response.status_code == 200
+    assert response.json() == {"E00000001": "E02000001", "E00000002": "E02000001"}
+
+    response = client.post(
+        "/geog_lookup", json={"geography": "OA21", "ids": ["E00000001", "E00000002"], "target": "PFA23"}
+    )
+    assert response.status_code == 200
+    assert response.json() == {"E00000001": PFA_CODE, "E00000002": PFA_CODE}
+
+    response = client.post("/geog_lookup", json={"geography": "LSOA21", "ids": ["E01000001"], "target": "LAD24"})
+    assert response.status_code == 200
+    assert response.json() == {"E01000001": LAD_CODE}
+
+
+def test_geog_lookup_validation(client: TestClient) -> None:
+    for bad in (
+        {"geography": "H3", "resolution": 8, "target": "H3"},  # H3 target
+        {"geography": "OA21", "target": "OA21"},  # source == target
+        {"geography": "H3", "target": "OA21"},  # missing resolution
+        {"geography": "OA21", "resolution": 8, "target": "LSOA21"},  # resolution without H3
+        {"geography": "H3", "resolution": 7, "target": "OA21"},  # not precomputed
+        {"geography": "GRID", "target": "OA21"},  # unsupported source
+    ):
+        response = client.post("/geog_lookup", json={"ids": ["dummy"]} | bad)
+        assert response.status_code == 400, bad
+        assert response.json()["error"] == "ValueError"
 
 
 # --- census_geographies ---

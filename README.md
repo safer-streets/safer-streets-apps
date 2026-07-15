@@ -33,10 +33,12 @@ Picking up the default data dir:
 uv run streamlit run src/safer_streets_apps/streamlit/Main.py
 ```
 
-If you want to point it to another data dir (NB the docker image hard-codes this value)
+If you want to point it to a specific instance of the API
 
 ```sh
-SAFER_STREETS_DATA_DIR=<insert-here> uv run streamlit run src/safer_streets_apps/streamlit/Main.py
+SAFER_STREETS_API_URL=http://localhost:5000 \
+SAFER_STREETS_API_KEY=d6ce75657f9bd3c5ad4b3b99951100c9 \
+uv run streamlit run src/safer_streets_apps/streamlit/Main.py
 ```
 
 ### API
