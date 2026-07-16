@@ -69,7 +69,8 @@ def features(con: DuckDBPyConnection, params: FeaturesRequest, latlon: bool) -> 
     match params.geography:
         case "H3":
             raw_hexes = con.sql(sql.H3_FEATURES, params=(params.ids,)).fetchdf()
-            features = gpd.GeoDataFrame(
+            # ty resolves GeoDataFrame construction against the pandas DataFrame stubs, which lack geometry/crs
+            features = gpd.GeoDataFrame(  # ty: ignore[no-matching-overload]
                 raw_hexes[["spatial_id"]], geometry=gpd.GeoSeries.from_wkt(raw_hexes.wkt), crs="epsg:4326"
             ).set_index("spatial_id", drop=True)
             if not latlon:
@@ -81,7 +82,7 @@ def features(con: DuckDBPyConnection, params: FeaturesRequest, latlon: bool) -> 
                 ),
                 params=(params.ids,),
             ).fetchdf()
-            features = gpd.GeoDataFrame(
+            features = gpd.GeoDataFrame(  # ty: ignore[no-matching-overload]
                 raw_features[["spatial_id"]], geometry=gpd.GeoSeries.from_wkt(raw_features.wkt), crs="epsg:27700"
             ).set_index("spatial_id", drop=True)
             if latlon:
@@ -101,7 +102,7 @@ def all_features(con: DuckDBPyConnection, geography: AdminGeography, latlon: boo
         sql.ALL_ADMIN_FEATURES.format(extract=sql.EXTRACT, parquet=sql.ADMIN_CENSUS_PARQUET[geography]),
     ).fetchdf()
     print(raw_features)
-    features = gpd.GeoDataFrame(
+    features = gpd.GeoDataFrame(  # ty: ignore[no-matching-overload]
         raw_features[["spatial_id"]], geometry=gpd.GeoSeries.from_wkt(raw_features.wkt), crs="epsg:27700"
     ).set_index("spatial_id", drop=True)
     if latlon:

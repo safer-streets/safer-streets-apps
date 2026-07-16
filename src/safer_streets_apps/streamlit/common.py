@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Any, get_args
 
 import geopandas as gpd
 import pandas as pd
@@ -6,15 +7,19 @@ import streamlit as st
 from dateutil.relativedelta import relativedelta
 from safer_streets_core.api_helpers import fetch_df, fetch_gdf, get, post
 from safer_streets_core.spatial import (
+    SpatialUnit,
     get_demographics,
     get_force_boundary,
     load_population_data,
+    map_to_spatial_unit,
 )
 from safer_streets_core.utils import (
     CrimeType,
     Force,
     Month,
     data_dir,
+    fix_force_name,
+    get_monthly_crime_counts,
     load_crime_data,
 )
 
@@ -43,7 +48,7 @@ def time_window() -> list[Month]:
 
 
 @st.cache_data
-def get_oac(ids: list[str]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def get_oac(ids: list[str]) -> tuple["pd.Series[str]", pd.DataFrame, pd.DataFrame]:
     h3_oa_mapping = pd.Series(
         post("/geog_lookup", payload={"geography": "H3", "ids": ids, "resolution": 9, "target": "OA21"}), name="oa21cd"
     )
@@ -57,7 +62,7 @@ def get_oac(ids: list[str]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 all_months = time_window()
 
 
-geographies = {
+geographies: dict[str, tuple[SpatialUnit, dict[str, Any]]] = {
     "Local authority districts (2024)": ("LAD24", {}),
     "Middle layer Super Output Areas (census)": ("MSOA21", {}),
     "Lower layer Super Output Areas (census)": ("LSOA21", {}),
@@ -68,19 +73,39 @@ geographies = {
 }
 
 
-# def get_counts_and_features_old(
-#     raw_data: gpd.GeoDataFrame, boundary: gpd.GeoDataFrame, spatial_unit: SpatialUnit, **spatial_unit_params: Any
-# ):
-#     crime_data, features = map_to_spatial_unit(raw_data, boundary, spatial_unit, **spatial_unit_params)
-#     # compute area in sensible units before changing crs!
-#     features["area_km2"] = features.area / 1_000_000
-#     # now convert everything to Webmercator
-#     crime_data = crime_data.to_crs(epsg=4326)
-#     boundary = boundary.to_crs(epsg=4326)
-#     features = features.to_crs(epsg=4326)
-#     # and aggregate
-#     counts = get_monthly_crime_counts(crime_data, features)
-#     return counts, features, boundary
+def get_counts_and_features_old(
+    raw_data: gpd.GeoDataFrame, boundary: gpd.GeoDataFrame, spatial_unit: SpatialUnit, **spatial_unit_params: Any
+) -> tuple[pd.DataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    crime_data, features = map_to_spatial_unit(raw_data, boundary, spatial_unit, **spatial_unit_params)
+    # compute area in sensible units before changing crs!
+    features["area_km2"] = features.area / 1_000_000
+    # now convert everything to Webmercator
+    crime_data = crime_data.to_crs(epsg=4326)
+    boundary = boundary.to_crs(epsg=4326)
+    features = features.to_crs(epsg=4326)
+    # and aggregate
+    counts = get_monthly_crime_counts(crime_data, features)
+    return counts, features, boundary
+
+
+# forces with complete data, named to match PFA23NM boundary data
+FORCES = tuple(
+    fix_force_name(f) for f in get_args(Force) if f not in ["BTP", "Greater Manchester", "Northern Ireland", "Gwent"]
+)
+
+
+@st.cache_data
+def simplified_pfa_boundaries() -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    force_boundaries = fetch_gdf("/features", params={"geography": "PFA23"})
+    # this should be significantly smaller than a hex (although its not used in a spatial join)
+    force_boundaries.geometry = force_boundaries.simplify(tolerance=50)
+    force_boundaries = force_boundaries.to_crs(epsg=4326)
+
+    active = force_boundaries.PFA23NM.isin(FORCES)
+    return (
+        force_boundaries[active][["PFA23NM", "geometry"]],
+        force_boundaries[~active][["PFA23NM", "geometry"]],
+    )
 
 
 @st.cache_data

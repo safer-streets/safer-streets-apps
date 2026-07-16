@@ -1,7 +1,7 @@
 import os
 from base64 import b64encode
 from io import BytesIO
-from typing import Any, get_args
+from typing import get_args
 
 import geopandas as gpd
 import pandas as pd
@@ -20,6 +20,8 @@ from safer_streets_core.utils import (
     fix_force_name,
     monthgen,
 )
+
+from safer_streets_apps.streamlit.common import simplified_pfa_boundaries
 
 # not updated past 2025-12
 # from safer_streets_apps.streamlit.common import latest_month
@@ -48,19 +50,6 @@ REF_LON = -2.0
 @st.cache_data
 def get_crime_counts() -> pd.DataFrame:
     return pd.read_parquet(data_dir() / f"pfa-crime-counts-{latest_month}.parquet").sort_index()
-
-
-@st.cache_data
-def simplified_pfa_boundaries() -> tuple[dict[str, Any], dict[str, Any]]:
-    force_boundaries = gpd.read_file(data_dir() / "Police_Force_Areas_December_2023_EW_BFE_2734900428741300179.zip")
-    # this should be significantly smaller than a hex (although its not used in a spatial join)
-    force_boundaries.geometry = force_boundaries.simplify(tolerance=50)
-    force_boundaries = force_boundaries.to_crs(epsg=4326)
-
-    return (
-        force_boundaries[force_boundaries.PFA23NM.isin(FORCES_FOR_MAP)][["PFA23NM", "geometry"]],
-        force_boundaries[~force_boundaries.PFA23NM.isin(FORCES_FOR_MAP)][["PFA23NM", "geometry"]],
-    )
 
 
 MONTHS = Itr(monthgen(latest_month, backwards=True)).take(N_MONTHS).rev().collect()
@@ -116,7 +105,9 @@ def main() -> None:
                 b64 = b64encode(buffer.getvalue()).decode("ascii")
                 graphs.loc[fix_force_name(f)] = f"data:image/png;base64,{b64}"
 
-            active_pfa_boundaries = active_pfa_boundaries.merge(graphs, left_on="PFA23NM", right_index=True)
+            active_pfa_boundaries = gpd.GeoDataFrame(
+                active_pfa_boundaries.merge(graphs, left_on="PFA23NM", right_index=True)
+            )
             # st.dataframe(graphs)
 
         # render map

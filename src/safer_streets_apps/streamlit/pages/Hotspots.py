@@ -21,10 +21,10 @@ load_dotenv()
 # os.environ["SAFER_STREETS_API_URL"] = "http://localhost:5000"
 N_MONTHS = 36
 
-HEX_AREA = 0.2**2 * 3**1.5 / 2
+HEX_AREA = 0.0945  # Mean H3R9 cell area
 
 
-def _make_label(timeslice: tuple[str]):
+def _make_label(timeslice: list[str]) -> str:
     return timeslice[0] if len(timeslice) == 1 else f"{timeslice[0]} to {timeslice[-1]}"
 
 
@@ -42,11 +42,9 @@ def get_counts(force: Force, crime_type: CrimeType) -> pd.DataFrame:
                 "months": list(map(str, all_months)),
             },
         )
-        .set_index(["spatial_id", "month"])
-        .drop(columns="crime_type")
+        .set_index(["spatial_id", "month"])["count"]
         .unstack(level="month", fill_value=0)
     )
-    counts.columns = counts.columns.droplevel(0)
     return counts
 
 
@@ -67,7 +65,7 @@ maximum number of crimes of a given type that can be captured within that area, 
 3 years.
 
 Firstly select a threshold for hotspots, in terms of percentage coverage of the force area, between 0.1% and 5%. (At
-least one hex cell will be considered).
+least one H3 cell will be considered).
 
 A rolling window of crime counts (1, 3, 6, or 12 months) are aggregated onto a H3 grid (resolution 9, ~0.1km²) and
 ranked. The top percentage of cells are recorded for each window. The window is updated and the ranks recomputed to
@@ -78,7 +76,7 @@ cover the 3 years of data.
 Finally, spatial units are then ranked by the number of times each spatial unit features in the top 1% over the 3
 year period.
 
-The interactive map displays the hotspot hex cells shaded in proportion to their frequency as a hotspot.
+The interactive map displays the hotspot H3r9 cells shaded in proportion to their frequency as a hotspot.
 """)
 
     st.sidebar.header("Hotspots")
@@ -134,8 +132,6 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
 
             hex_oa_mapping, oac_codes, oac_desc = get_oac(counts.index.tolist())
 
-            st.dataframe(oac_desc)
-
             pfa_geodata = get("pfa_geodata", params={"force": force})
             hotspot_area = coverage * pfa_geodata["properties"]["area"] / 100
             n_hotspots = max(1, int(hotspot_area / HEX_AREA))
@@ -146,17 +142,18 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
                 months = [str(m) for m in slice]
                 ranked = counts[months].sum(axis=1).sort_values(ascending=False)
                 hotspots = ranked.head(n_hotspots)
-                props.loc[i, "Time slice"] = _make_label(months)
+                label = _make_label(months)
                 props.loc[i, "Proportion in hotspots"] = 100 * hotspots.sum() / ranked.sum()
 
                 if prediction_slice:
                     pred_months = [str(m) for m in prediction_slice]
                     pred_counts = counts[pred_months].sum(axis=1)
                     # pred_props[_make_label(pred_months)] = 100 * pred_counts.loc[hotspots.index].sum() / pred_counts.sum()
-                    props.loc[i, "Time slice"] += " predicting " + _make_label(pred_months)
+                    label += " predicting " + _make_label(pred_months)
                     props.loc[i, "Proportion predicted by hotspots"] = (
                         100 * pred_counts.loc[hotspots.index].sum() / pred_counts.sum()
                     )
+                props.loc[i, "Time slice"] = label
                 temp.append(ranked.head(n_hotspots).reset_index().spatial_id)
 
             # map hexes to OAs and add OA classifications
@@ -236,7 +233,7 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
         st.markdown(f"""
             - **{window}-month lookback at {update}-month intervals ({n_obs} observations)**
             - **{prediction_window}-month prediction window ({sum(~props["Proportion predicted by hotspots"].isna())} predictions)**
-            - **{coverage}% coverage corresponds to {n_hotspots} hex cells ({HEX_AREA * n_hotspots:.1f}km²)**
+            - **{coverage}% coverage corresponds to {n_hotspots} H3r9 cells ({HEX_AREA * n_hotspots:.1f}km²)**
             - **{len(h3_cells)} cells ({HEX_AREA * len(h3_cells):.1f}km²) feature at least once as hotspots. (Total PFA area
             is {pfa_geodata["properties"]["area"]:.1f}km²)**
         """)

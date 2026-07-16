@@ -174,9 +174,10 @@ async def h3(force: Force, resolution: int, latlon: Annotated[bool, Query] = Fal
         params={"pfa": fix_force_name(force)},
     ).fetchdf()
 
-    features = gpd.GeoDataFrame(raw[["spatial_unit"]], geometry=raw.wkt.apply(wkt.loads), crs="epsg:27700").set_index(
-        "spatial_unit"
-    )
+    # ty resolves GeoDataFrame construction against the pandas DataFrame stubs, which lack geometry/crs
+    features = gpd.GeoDataFrame(  # ty: ignore[no-matching-overload]
+        raw[["spatial_unit"]], geometry=raw.wkt.apply(wkt.loads), crs="epsg:27700"
+    ).set_index("spatial_unit")
     if latlon:
         features = features.to_crs(epsg=4326)
 
@@ -210,9 +211,9 @@ async def census_geographies(geography: CensusGeography, force: Force) -> Respon
         sql.CENSUS_GEOGRAPHIES.format(extract=sql.EXTRACT, parquet=sql.ADMIN_CENSUS_PARQUET[geography]),
         params=(fix_force_name(force),),
     ).fetchdf()
-    features = gpd.GeoDataFrame(raw["spatial_unit"], geometry=raw.wkt.apply(wkt.loads), crs="epsg:27700").set_index(
-        "spatial_unit", drop=True
-    )
+    features = gpd.GeoDataFrame(  # ty: ignore[no-matching-overload]
+        raw["spatial_unit"], geometry=raw.wkt.apply(wkt.loads), crs="epsg:27700"
+    ).set_index("spatial_unit", drop=True)
     return Response(content=features.to_json(), media_type="application/json")
 
 
@@ -330,7 +331,9 @@ async def hotspots(
 
     hotspots = app.state.con.sql(query, params=params).fetchdf()
     hotspots = (
-        gpd.GeoDataFrame(hotspots[["spatial_unit", "count"]], geometry=hotspots.wkt.apply(wkt.loads), crs="epsg:27700")
+        gpd.GeoDataFrame(  # ty: ignore[no-matching-overload]
+            hotspots[["spatial_unit", "count"]], geometry=hotspots.wkt.apply(wkt.loads), crs="epsg:27700"
+        )
         .set_index("spatial_unit", drop=True)
         .dropna()
     )
