@@ -1,5 +1,19 @@
 # safer-streets-apps
 
+---
+
+**No further development in this repo**
+
+Tag `phase1` (this and core repo) represents the state of the code at the end of phase 1.
+
+Branch `api-tests-and-endpoint-fixes` is an incomplete attempt at migration to the new data model - the new datasets do
+not feature all the data used in phase1. It also has an example of streamlit working directly (and nicely) with duckdb
+(in-memory+azure parquet storage)
+
+Phase 2 outputs should be implemented from scratch in separate repo(s)
+
+---
+
 - Crime GeoData API
 - Crime Explorer App
 
