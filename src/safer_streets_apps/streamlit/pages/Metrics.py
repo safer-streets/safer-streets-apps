@@ -175,7 +175,7 @@ rank-biased overlap, Spearman rank correlation
                     ordered_counts[hits].n_crimes.sum() / features[hits].area_km2.sum() / mean_density
                 )
 
-                if previous_period:
+                if previous_period and previous_ordered_counts is not None:
                     consistency_measures.loc[period, "F1 score"] = f1_score(
                         captured_by_period[previous_period], captured_by_period[period]
                     )

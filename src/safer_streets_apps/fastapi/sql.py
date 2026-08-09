@@ -1,279 +1,202 @@
-AGGREGATE_TO_HEX = """
-CREATE TABLE IF NOT EXISTS crime_counts_hex AS
-SELECT
-    h.spatial_unit AS spatial_unit,
-    c.crime_type AS crime_type,
-    c.month AS month,
-    COUNT(c.month) AS count
-FROM
-    hex200 h
-RIGHT JOIN
-    crime_data c ON ST_Intersects(h.geometry, c.geometry)
-GROUP BY
-    spatial_unit, month, crime_type;
-"""
+# All tables are read directly from the project's public Azure blob storage as parquet files.
+# `{extract}`/`{transform}`/`{index}` are substituted with the paths below; `{parquet}`/`{res}` are
+# substituted with a (validated) census-boundary parquet name / H3 resolution before execution.
+EXTRACT = "az://phase2/extract"
+TRANSFORM = "az://phase2/transform"
+INDEX = "az://phase2/index.parquet"
+
+# geography -> boundary parquet whose `spatial_id` column is that geography's code (e.g. OA21 -> E00...)
+ADMIN_CENSUS_PARQUET = {
+    "OA21": "output_areas_2021",
+    "LSOA21": "lsoa_2021",
+    "MSOA21": "msoa_2021",
+    "LAD24": "local_authority_districts",
+    "PFA23": "police_force_areas",
+}
+
+# H3 resolutions for which crime counts / geography lookups are precomputed on Azure
+H3_RESOLUTIONS = (8, 9, 10)
 
 
-AGGREGATE_TO_OA21 = """
-CREATE TABLE IF NOT EXISTS crime_counts_oa AS
-SELECT
-    h.OA21CD AS spatial_unit,
-    c.crime_type AS crime_type,
-    c.month AS month,
-COUNT(c.month) AS count
-FROM
-    OA21_boundaries h
-RIGHT JOIN
-    crime_data c ON ST_Intersects(h.geometry, c.geometry)
-GROUP BY
-    spatial_unit, month, crime_type;
-"""
-
-# This implementation directly returns geojson so using GeoPandas to translate is not required
-# This is Likely to be a far more efficient approach, but gpd isnt a bottleneck currently, and standard geojson doesnt
-# include CRS
+# Directly return geojson so translating via GeoPandas is not required. This is likely a far more
+# efficient approach, but gpd isn't a bottleneck currently, and standard geojson doesn't include CRS.
 PFA_GEODATA = """
 WITH g AS (
     SELECT
-        PFA23CD AS spatial_unit,
-        PFA23NM AS name,
-        ST_Area(geometry) / 1000000 AS area,
-        ST_Transform(geometry, 'EPSG:27700', 'EPSG:4326', always_xy := true) AS geometry
-    FROM force_boundaries
+        spatial_id,
+        pfa23nm AS name,
+        ST_Area(geom) / 1000000 AS area,
+        ST_Transform(geom, 'EPSG:27700', 'EPSG:4326', always_xy := true) AS geom
+    FROM read_parquet('{extract}/police_force_areas.parquet')
     WHERE PFA23NM = ?
 )
 SELECT json_object(
     'type', 'Feature',
-    'geometry', ST_AsGeoJSON(geometry)::json,
+    'geometry', ST_AsGeoJSON(geom)::json,
     'properties', json_object(
-        'spatial_unit', spatial_unit,
+        'spatial_id', spatial_id,
         'name', name,
         'area', area,
-        'lon', ST_X(ST_Centroid(geometry)),
-        'lat', ST_Y(ST_Centroid(geometry))
+        'lon', ST_X(ST_Centroid(geom)),
+        'lat', ST_Y(ST_Centroid(geom))
     )
 ) AS feature
 FROM g
 """
 
 
-HEX_FEATURES = """
-SELECT spatial_unit, ST_AsText(hex200.geometry) AS wkt
-FROM hex200
-WHERE spatial_unit IN ?
-"""
-
+# H3 cell boundaries are computed on the fly from the cell ids (no stored geometry needed)
 H3_FEATURES = """
 WITH ids AS (
-SELECT * AS spatial_unit FROM unnest(?)
+SELECT * AS spatial_id FROM unnest(?)
 )
-SELECT spatial_unit, h3_cell_to_boundary_wkt(spatial_unit) AS wkt FROM ids
+SELECT spatial_id, h3_cell_to_boundary_wkt(spatial_id) AS wkt FROM ids
 """
 
-CENSUS_FEATURES = """
-SELECT {geography}CD AS spatial_unit, ST_AsText(geometry) AS wkt
-FROM {geography}_boundaries
-WHERE {geography}CD IN ?
+ADMIN_CENSUS_FEATURES = """
+SELECT spatial_id, ST_AsText(geom) AS wkt
+FROM read_parquet('{extract}/{parquet}.parquet')
+WHERE spatial_id IN ?
 """
 
+ALL_ADMIN_FEATURES = """
+SELECT spatial_id, ST_AsText(geom) AS wkt
+FROM read_parquet('{extract}/{parquet}.parquet')
+"""
+
+# H3 grid over a police force area. `h3_polygon_wkt_to_cells` only handles single polygons, so the
+# (multi)polygon force boundary is exploded with ST_Dump first.
 PFA_H3_GRID = """
-WITH h AS (
-SELECT unnest(h3_polygon_wkt_to_cells(
-    ST_AsText(ST_Transform(geometry, 'EPSG:27700', 'EPSG:4326', always_xy := true)), ?)) AS id
-    FROM force_boundaries WHERE pfa23nm = ?
+WITH parts AS (
+    SELECT UNNEST(ST_Dump(ST_Transform(geom, 'EPSG:27700', 'EPSG:4326', always_xy := true))).geom AS g
+    FROM read_parquet('{extract}/police_force_areas.parquet') WHERE pfa23nm = $pfa
+),
+h AS (
+    SELECT DISTINCT UNNEST(h3_polygon_wkt_to_cells(ST_AsText(g), {res})) AS id FROM parts
 ),
 h3 AS (
-    SELECT id, ST_Transform(ST_GeomFromWKB(h3_cell_to_boundary_wkb(id)), 'EPSG:4326', 'EPSG:27700', always_xy := true) AS geometry FROM h
+    SELECT
+        id,
+        ST_Transform(ST_GeomFromWKB(h3_cell_to_boundary_wkb(id)), 'EPSG:4326', 'EPSG:27700', always_xy := true) AS geometry
+    FROM h
 )
-SELECT id AS spatial_unit, ST_AsText(geometry) AS wkt FROM h3
+SELECT lower(hex(id)) AS spatial_unit, ST_AsText(geometry) AS wkt FROM h3
 """
 
 
+# census geographies overlapping a police force, resolved by spatial intersection with the force boundary
 CENSUS_GEOGRAPHIES = """
-WITH geog AS (
-  SELECT p.spatial_unit, b.geometry
-  FROM pfa_geog_lookup p
-  JOIN {geography}_boundaries b ON p.spatial_unit = b.{geography}CD
-  WHERE p.geog = '{geography}'
-  AND p.PFA23CD = (
-    SELECT DISTINCT PFA23CD
-    FROM force_boundaries
-    WHERE PFA23NM = ?
-    LIMIT 1
-  )
+WITH force AS (
+    SELECT geom FROM read_parquet('{extract}/police_force_areas.parquet') WHERE pfa23nm = ?
 )
-SELECT spatial_unit, ST_AsText(geometry) AS wkt FROM geog
+SELECT b.spatial_id AS spatial_unit, ST_AsText(b.geom) AS wkt
+FROM read_parquet('{extract}/{parquet}.parquet') b, force
+WHERE ST_Intersects(b.geom, force.geom)
 """
 
-HEX_COUNTS_OLD = """
-WITH h AS (
-    SELECT * FROM hex200
-    WHERE ST_Intersects(
-        hex200.geometry,
-        (SELECT ST_Union_Agg(geometry) FROM force_boundaries WHERE PFA23NM = $1)
-    )
-)
-SELECT c.spatial_unit, c.month, c.count FROM crime_counts_hex c
-RIGHT JOIN h ON h.spatial_unit = c.spatial_unit
-WHERE c.crime_type = $2
-"""
-
+# Deprecated: crime counts aggregated to census geographies for a single force/category, all months.
+# Points are spatial-joined against the boundaries at request time.
 CENSUS_COUNTS = """
-WITH h AS (
-    SELECT {geography}CD as spatial_unit, geometry FROM {geography}_boundaries
-    WHERE ST_Intersects(
-        {geography}_boundaries.geometry,
-        (SELECT ST_Union_Agg(geometry) FROM force_boundaries WHERE PFA23NM = $1)
-    )
+WITH force AS (
+    SELECT geom FROM read_parquet('{extract}/police_force_areas.parquet') WHERE pfa23nm = $1
+),
+b AS (
+    SELECT b.spatial_id, b.geom
+    FROM read_parquet('{extract}/{parquet}.parquet') b, force
+    WHERE ST_Intersects(b.geom, force.geom)
 )
-SELECT c.spatial_unit, c.month, c.count FROM crime_counts_oa c
-RIGHT JOIN h ON h.spatial_unit = c.spatial_unit
+SELECT b.spatial_id AS spatial_unit, c._month AS month, COUNT(*) AS count
+FROM b JOIN read_parquet('{extract}/crime_data.parquet') c
+    ON ST_Intersects(b.geom, ST_Transform(ST_Point(c.longitude, c.latitude), 'EPSG:4326', 'EPSG:27700', always_xy := true))
 WHERE c.crime_type = $2
+GROUP BY spatial_unit, month
 """
 
-NATIONAL_HOTSPOTS_HEX = """
+NATIONAL_HOTSPOTS_H3 = """
 WITH h AS (
-    SELECT spatial_unit, count
-    FROM crime_counts_hex
+    SELECT spatial_id, SUM(count) AS count
+    FROM read_parquet('{transform}/crime_counts_h3_{res}.parquet')
     WHERE crime_type = $1 AND month = ANY($2)
-    ORDER BY count DESC, spatial_unit ASC
+    GROUP BY spatial_id
+    ORDER BY count DESC, spatial_id ASC
     LIMIT $3
 )
 SELECT
-    h.spatial_unit, SUM(h.count) AS count, ST_AsText(hex200.geometry) AS wkt
-FROM hex200
-RIGHT JOIN h ON h.spatial_unit = hex200.spatial_unit
-GROUP BY h.spatial_unit, wkt
-ORDER BY count DESC, h.spatial_unit ASC;
+    spatial_id AS spatial_unit, count,
+    ST_AsText(ST_Transform(h3_cell_to_boundary_wkt(spatial_id)::GEOMETRY, 'EPSG:4326', 'EPSG:27700', always_xy := true)) AS wkt
+FROM h
+ORDER BY count DESC, spatial_id ASC
 """
 
-FORCE_HOTSPOTS_HEX = """
-WITH h AS (
-    SELECT * FROM hex200
-    WHERE ST_Intersects(
-        hex200.geometry,
-        (SELECT ST_Union_Agg(geometry) FROM force_boundaries WHERE PFA23NM = $1)
-    )
-)
-SELECT c.spatial_unit, SUM(c.count) AS count, ST_AsText(h.geometry) AS wkt FROM crime_counts_hex c
-RIGHT JOIN h ON h.spatial_unit = c.spatial_unit
-WHERE c.crime_type = $2 AND c.month = ANY($3)
-GROUP BY c.spatial_unit, wkt
-ORDER BY count DESC, c.spatial_unit ASC
-LIMIT $4;
-"""
-
-# get OA counts GDF for a single force, using density as a tiebreak (i.e. favour smaller OAs)
-FORCE_HOTSPOTS_OA = """
-WITH h AS (
-    SELECT * FROM OA21_boundaries
-    WHERE ST_Intersects(
-        OA21_boundaries.geometry,
-        (SELECT ST_Union_Agg(geometry) FROM force_boundaries WHERE PFA23NM = $1)
-    )
+FORCE_HOTSPOTS_H3 = """
+WITH cells AS (
+    SELECT spatial_id FROM read_parquet('{transform}/h3_{res}_geogs.parquet')
+    WHERE pfa23cd = (SELECT spatial_id FROM read_parquet('{extract}/police_force_areas.parquet') WHERE pfa23nm = $1)
+),
+h AS (
+    SELECT c.spatial_id, SUM(c.count) AS count
+    FROM read_parquet('{transform}/crime_counts_h3_{res}.parquet') c
+    JOIN cells USING (spatial_id)
+    WHERE c.crime_type = $2 AND c.month = ANY($3)
+    GROUP BY c.spatial_id
+    ORDER BY count DESC, c.spatial_id ASC
+    LIMIT $4
 )
 SELECT
-    c.spatial_unit, SUM(c.count) AS count,
-    ST_Area(h.geometry) / 1000000 AS area,
-    ST_AsText(h.geometry) AS wkt
-FROM crime_counts_oa c
-RIGHT JOIN h ON h.OA21CD = c.spatial_unit
-WHERE c.crime_type = $2 AND c.month = ANY($3)
-GROUP BY c.spatial_unit, wkt, h.geometry
-ORDER BY count DESC, SUM(count) / area DESC, c.spatial_unit ASC
-LIMIT $4;
+    spatial_id AS spatial_unit, count,
+    ST_AsText(ST_Transform(h3_cell_to_boundary_wkt(spatial_id)::GEOMETRY, 'EPSG:4326', 'EPSG:27700', always_xy := true)) AS wkt
+FROM h
 """
 
+# H3 crime counts come straight from the precomputed table, filtered to the force's cells.
 H3_CRIME_COUNTS = """
-WITH h AS (
-SELECT unnest(h3_polygon_wkt_to_cells(
-    ST_AsText(ST_Transform(geometry, 'EPSG:27700', 'EPSG:4326', always_xy := true)), $resolution)) AS id
-    FROM force_boundaries WHERE pfa23nm = $pfa
-),
-h3 AS (
-    SELECT id, ST_Transform(ST_GeomFromWKB(h3_cell_to_boundary_wkb(id)), 'EPSG:4326', 'EPSG:27700', always_xy := true) AS geometry FROM h
-)
--- SELECT id, ST_AsText(geometry) AS wkt FROM h3
-SELECT lcase(hex(h3.id)) AS spatial_unit, c.crime_type AS crime_type, c.month AS month, COUNT(c.month) AS count
-FROM h3
-LEFT JOIN crime_data c ON ST_Intersects(h3.geometry, c.geometry)
-WHERE c.month IN $months AND c.crime_type IN $crime_types
-GROUP BY spatial_unit, month, crime_type
-"""
-
-HEX_CRIME_COUNTS = """
-WITH h AS (
-    SELECT * FROM hex200
-    WHERE ST_Intersects(
-        hex200.geometry,
-        (SELECT ST_Union_Agg(geometry) FROM force_boundaries WHERE PFA23NM = $pfa)
+SELECT c.spatial_id, c.crime_type AS crime_type, c.month AS month, c.count AS count
+FROM read_parquet('{transform}/crime_counts_h3_{res}.parquet') c
+WHERE c.spatial_id IN (
+    SELECT spatial_id FROM read_parquet('{transform}/h3_{res}_geogs.parquet')
+    WHERE pfa23cd = (
+        SELECT spatial_id FROM read_parquet('{extract}/police_force_areas.parquet') WHERE pfa23nm = $pfa
     )
 )
-SELECT c.spatial_unit, c.month, c.count FROM crime_counts_hex c
-RIGHT JOIN h ON h.spatial_unit = c.spatial_unit
-WHERE c.month IN $months AND c.crime_type IN $crime_types
+AND c.month IN $months AND c.crime_type IN $crime_types
 """
 
+# Stat/Admin geog crime counts come straight from the precomputed table, filtered to the force's cells.
 CENSUS_CRIME_COUNTS = """
-WITH geog AS (
-    SELECT p.spatial_unit, b.geometry
-    FROM pfa_geog_lookup p
-    JOIN {geography}_boundaries b ON p.spatial_unit = b.{geography}CD
-    WHERE p.geog = '{geography}'
-    AND p.PFA23CD = (
-        SELECT DISTINCT PFA23CD
-        FROM force_boundaries
-        WHERE PFA23NM = $pfa
-        LIMIT 1
+SELECT c.spatial_id, c.crime_type AS crime_type, c.month AS month, c.count AS count
+FROM read_parquet('{transform}/crime_counts_{geography}cd.parquet') c
+WHERE c.spatial_id IN (
+    SELECT DISTINCT {geography}cd FROM read_parquet('{transform}/h3_8_geogs.parquet')
+    WHERE pfa23cd = (
+        SELECT spatial_id FROM read_parquet('{extract}/police_force_areas.parquet') WHERE pfa23nm = $pfa
     )
 )
-SELECT geog.spatial_unit, c.crime_type AS crime_type, c.month AS month, COUNT(c.month) AS count
-FROM geog
-LEFT JOIN crime_data c ON ST_Intersects(geog.geometry, c.geometry)
-WHERE c.month IN $months AND c.crime_type IN $crime_types
-GROUP BY spatial_unit, month, crime_type
+AND c.month IN $months AND c.crime_type IN $crime_types
 """
 
-# NB use fix_force_name() for first force, tokenise_force_name()
-PFA_ETH_PROPS = """
-WITH h AS (
-    SELECT unnest(h3_polygon_wkt_to_cells(
-        ST_AsText(ST_Transform(geometry, 'EPSG:27700', 'EPSG:4326', always_xy := true)), ?)) AS id
-    FROM force_boundaries WHERE pfa23nm = ?
-),
-h3 AS (
-    SELECT
-        lower(hex(id)) as spatial_unit,
-        ST_Transform(ST_GeomFromWKB(
-            h3_cell_to_boundary_wkb(id)), 'EPSG:4326', 'EPSG:27700', always_xy := true) AS geometry
-    FROM h
-),
-ap AS (
-    SELECT
-        C2021_ETH_20_NAME, C2021_AGE_6_NAME, C_SEX_NAME, geometry
-    FROM assigned_population
-    WHERE pfa = ?
-),
-counts AS (
-    SELECT
-        h3.spatial_unit AS spatial_unit,
-        ap.C2021_ETH_20_NAME AS eth,
-        COUNT(ap.C2021_ETH_20_NAME) AS count
-    FROM
-        h3
-    LEFT JOIN
-        ap ON ST_Intersects(h3.geometry, ap.geometry)
-    GROUP BY
-        spatial_unit, eth
+
+# Map H3 cells to the ONS geography each most overlaps (precomputed in h3_{res}_geogs)
+H3_GEOG_LOOKUP = """
+SELECT spatial_id, {target}cd AS target_id
+FROM read_parquet('{transform}/h3_{res}_geogs.parquet')
+WHERE spatial_id IN ?
+"""
+
+# Map between non-H3 geographies via their res-8 H3 cells: each source unit is assigned the target
+# code shared by the most of its cells (majority vote, ties broken by code for determinism)
+CENSUS_GEOG_LOOKUP = """
+WITH pairs AS (
+    SELECT {source}cd AS spatial_id, {target}cd AS target_id, COUNT(*) AS n
+    FROM read_parquet('{transform}/h3_8_geogs.parquet')
+    WHERE {source}cd IN ?
+    GROUP BY ALL
 )
-SELECT spatial_unit, eth, count::DOUBLE / NULLIF(sum(count) OVER (PARTITION BY spatial_unit), 0) AS proportion
-FROM counts
+SELECT spatial_id, target_id
+FROM pairs
+QUALIFY ROW_NUMBER() OVER (PARTITION BY spatial_id ORDER BY n DESC, target_id) = 1
 """
 
 
-TABLE_SCHEMAS = """
-SELECT table_name,
-       column_name,
-       data_type
-FROM information_schema.columns;
+TABLE_METADATA = """
+SELECT * FROM read_parquet('{index}')
 """

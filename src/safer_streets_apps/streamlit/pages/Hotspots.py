@@ -9,7 +9,7 @@ from safer_streets_core.api_helpers import fetch_df, fetch_gdf, get
 from safer_streets_core.charts import DEFAULT_COLOUR
 from safer_streets_core.utils import DEFAULT_FORCE, CrimeType, Force, monthgen
 
-from safer_streets_apps.streamlit.common import get_oac, latest_month
+from safer_streets_apps.streamlit.common import all_months, get_oac
 
 st.set_page_config(layout="wide", page_title="Crime Hotspots", page_icon="👮")
 st.logo("./assets/safer-streets-small.png", size="large")
@@ -21,21 +21,30 @@ load_dotenv()
 # os.environ["SAFER_STREETS_API_URL"] = "http://localhost:5000"
 N_MONTHS = 36
 
-HEX_AREA = 0.2**2 * 3**1.5 / 2
+HEX_AREA = 0.0945  # Mean H3R9 cell area
 
 
-def _make_label(timeslice: tuple[str]):
+def _make_label(timeslice: list[str]) -> str:
     return timeslice[0] if len(timeslice) == 1 else f"{timeslice[0]} to {timeslice[-1]}"
 
 
 @st.cache_data
 def get_counts(force: Force, crime_type: CrimeType) -> pd.DataFrame:
     counts = (
-        fetch_df("hex_counts", params={"force": force, "category": crime_type})
-        .set_index(["spatial_unit", "month"])
+        fetch_df(
+            "crime_counts",
+            http_post=True,
+            payload={
+                "force": force,
+                "categories": [crime_type],
+                "geography": "H3",
+                "resolution": 9,
+                "months": list(map(str, all_months)),
+            },
+        )
+        .set_index(["spatial_id", "month"])["count"]
         .unstack(level="month", fill_value=0)
     )
-    counts.columns = counts.columns.droplevel(0)
     return counts
 
 
@@ -56,9 +65,9 @@ maximum number of crimes of a given type that can be captured within that area, 
 3 years.
 
 Firstly select a threshold for hotspots, in terms of percentage coverage of the force area, between 0.1% and 5%. (At
-least one hex cell will be considered).
+least one H3 cell will be considered).
 
-A rolling window of crime counts (1, 3, 6, or 12 months) are aggregated onto a hex grid (200m side, ~350m height) and
+A rolling window of crime counts (1, 3, 6, or 12 months) are aggregated onto a H3 grid (resolution 9, ~0.1km²) and
 ranked. The top percentage of cells are recorded for each window. The window is updated and the ranks recomputed to
 cover the 3 years of data.
 
@@ -67,18 +76,12 @@ cover the 3 years of data.
 Finally, spatial units are then ranked by the number of times each spatial unit features in the top 1% over the 3
 year period.
 
-The interactive map displays the hotspot hex cells shaded in proportion to their frequency as a hotspot.
+The interactive map displays the hotspot H3r9 cells shaded in proportion to their frequency as a hotspot.
 """)
 
     st.sidebar.header("Hotspots")
 
-    force = cast(
-        Force, st.sidebar.selectbox("Force Area", get_args(Force), index=DEFAULT_FORCE)
-    )  # default="West Yorkshire"
-
-    # _spatial_unit = st.sidebar.selectbox(
-    #     "Spatial unit", ["Hex cell", "Output area"], help="Choose either 200m hex cell or census output area"
-    # )
+    force = cast(Force, st.sidebar.selectbox("Force Area", get_args(Force), index=DEFAULT_FORCE))
 
     crime_type = st.sidebar.selectbox("Crime type", get_args(CrimeType), index=5)
 
@@ -86,7 +89,7 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
         "Area Coverage (%)",
         options=[0.1, 0.5, 1.0, 5.0],
         value=1.0,
-        help="Percentage of hex cells to consider as hotspots",
+        help="Percentage of H3 cells to consider as hotspots",
     )
 
     window = st.sidebar.select_slider(
@@ -111,16 +114,14 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
     )
 
     try:
+        latest_month = all_months[-1]
         with st.spinner("Loading crime data..."):
             counts = get_counts(force, crime_type)
 
         with st.spinner("Processing data..."):
-            timeline = (
-                Itr(monthgen(latest_month(), backwards=True)).take(N_MONTHS).rev().rolling(window).step_by(update)
-            )
+            timeline = Itr(monthgen(latest_month, backwards=True)).take(N_MONTHS).rev().rolling(window).step_by(update)
 
             # subsequent prediction_window months for each window in timeline, padded where data isnt available
-            # prediction_timeline = Itr(monthgen(timeline.peek()[-1] + 1)).take(N_MONTHS - window).rolling(prediction_window).step_by(update)
             prediction_timeline = (
                 Itr(monthgen(timeline.peek()[-1] + 1))
                 .take(N_MONTHS - window)
@@ -129,7 +130,7 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
                 .chain([None] * prediction_window)
             )
 
-            hex_oa_mapping, oac_codes, oac_desc = get_oac()
+            hex_oa_mapping, oac_codes, oac_desc = get_oac(counts.index.tolist())
 
             pfa_geodata = get("pfa_geodata", params={"force": force})
             hotspot_area = coverage * pfa_geodata["properties"]["area"] / 100
@@ -141,38 +142,43 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
                 months = [str(m) for m in slice]
                 ranked = counts[months].sum(axis=1).sort_values(ascending=False)
                 hotspots = ranked.head(n_hotspots)
-                props.loc[i, "Time slice"] = _make_label(months)
+                label = _make_label(months)
                 props.loc[i, "Proportion in hotspots"] = 100 * hotspots.sum() / ranked.sum()
 
                 if prediction_slice:
                     pred_months = [str(m) for m in prediction_slice]
                     pred_counts = counts[pred_months].sum(axis=1)
                     # pred_props[_make_label(pred_months)] = 100 * pred_counts.loc[hotspots.index].sum() / pred_counts.sum()
-                    props.loc[i, "Time slice"] += " predicting " + _make_label(pred_months)
+                    label += " predicting " + _make_label(pred_months)
                     props.loc[i, "Proportion predicted by hotspots"] = (
                         100 * pred_counts.loc[hotspots.index].sum() / pred_counts.sum()
                     )
-                temp.append(ranked.head(n_hotspots).reset_index().spatial_unit)
+                props.loc[i, "Time slice"] = label
+                temp.append(ranked.head(n_hotspots).reset_index().spatial_id)
 
             # map hexes to OAs and add OA classifications
             ranks = pd.concat(temp).value_counts().to_frame().join(hex_oa_mapping)
-            ranks = ranks.merge(oac_codes, left_on="OA21CD", right_index=True)
-            ranks = ranks.merge(oac_desc.rename("Supergroup"), left_on="supergroup_code", right_index=True)
-            ranks = ranks.merge(oac_desc.rename("Group"), left_on="group_code", right_index=True)
-            ranks = ranks.merge(oac_desc.rename("Subgroup"), left_on="subgroup_code", right_index=True)
+            ranks = ranks.merge(oac_codes, left_on="oa21cd", right_index=True)
+            ranks = ranks.merge(oac_desc, left_on="code", right_index=True)
 
         with st.spinner("Loading spatial data..."):
-            hexes = fetch_gdf("hexes", ranks.index.to_list(), http_post=True).set_index("id")
-            # TODO annoyingly comes back with a string index, can this be fixed?
-            hexes.index = hexes.index.astype(int)
-            # TODO also return in CRS we need for pydeck? Low priority - join/transform below takes ~20ms
-            hexes = hexes.join(ranks).to_crs(epsg=4326)
+            h3_cells = (
+                fetch_gdf(
+                    "/features?latlon=true",
+                    http_post=True,
+                    params={"latlon": True},
+                    payload={
+                        "geography": "H3",
+                        "ids": ranks.index.to_list(),
+                    },
+                )
+                .rename(columns={"id": "spatial_id"})  # TODO fix this at source
+                .set_index("spatial_id")
+            ).join(ranks)
             n_obs = (N_MONTHS - window) // update + 1
-            hexes["Frequency (%)"] = round(100.0 * hexes["count"] / n_obs, 1)
+            h3_cells["Frequency (%)"] = round(100.0 * h3_cells["count"] / n_obs, 1)
 
-        st.markdown(
-            f"### Hotspot repetition, {crime_type} in {force}, {latest_month() - N_MONTHS + 1} to {latest_month()}"
-        )
+        st.markdown(f"### Hotspot repetition, {crime_type} in {force}, {latest_month - N_MONTHS + 1} to {latest_month}")
 
         # render map
         view_state = pdk.ViewState(
@@ -197,7 +203,7 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
         hotspot_layer = (
             pdk.Layer(
                 "GeoJsonLayer",
-                hexes.__geo_interface__,
+                h3_cells.__geo_interface__,
                 stroked=True,
                 filled=True,
                 wireframe=True,
@@ -210,8 +216,8 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
 
         tooltip = {
             "html": f"Cell {{id}}<br/>Hotspot {{Frequency (%)}}% of the time ({{count}}/{n_obs})<br/>"
-            "{OA21CD} classification:<br/>"
-            "{Supergroup}<br/>{Group}<br/>{Subgroup}"
+            "{oa21cd} classification:<br/>"
+            "{supergroup_name}<br/>{group_name}<br/>{subgroup_name}"
         }
 
         st.pydeck_chart(
@@ -227,14 +233,14 @@ The interactive map displays the hotspot hex cells shaded in proportion to their
         st.markdown(f"""
             - **{window}-month lookback at {update}-month intervals ({n_obs} observations)**
             - **{prediction_window}-month prediction window ({sum(~props["Proportion predicted by hotspots"].isna())} predictions)**
-            - **{coverage}% coverage corresponds to {n_hotspots} hex cells ({HEX_AREA * n_hotspots:.1f}km²)**
-            - **{len(hexes)} cells ({HEX_AREA * len(hexes):.1f}km²) feature at least once as hotspots. (Total PFA area
+            - **{coverage}% coverage corresponds to {n_hotspots} H3r9 cells ({HEX_AREA * n_hotspots:.1f}km²)**
+            - **{len(h3_cells)} cells ({HEX_AREA * len(h3_cells):.1f}km²) feature at least once as hotspots. (Total PFA area
             is {pfa_geodata["properties"]["area"]:.1f}km²)**
         """)
 
         with st.expander("Output Area classfication rankings"):
-            levels = ["Supergroup", "Group", "Subgroup"]
-            level = st.select_slider("OAC Level", levels, value="Group")
+            levels = ["supergroup_name", "group_name", "subgroup_name"]
+            level = st.select_slider("OAC Level", levels, value="group_name")
             st.dataframe(ranks[levels[: levels.index(level) + 1]].value_counts().sort_values(ascending=False))
 
         st.markdown(

@@ -3,9 +3,10 @@ from typing import cast, get_args
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
-from safer_streets_core.utils import CATEGORIES, DEFAULT_FORCE, Force, latest_month
+from safer_streets_core.utils import CATEGORIES, DEFAULT_FORCE, Force
 
 from safer_streets_apps.streamlit.common import (
+    all_months,
     cache_demographic_data,
     date_range,
     geographies,
@@ -108,6 +109,7 @@ the hotspots - that is, the set of areas that capture the most crime for the tot
 
     try:
         with st.spinner("Loading crime data..."):
+            latest_month = all_months[-1]
             boundary = get_boundary(st.session_state.force)
             total_area = boundary["area"].sum()
             centroid_lat, centroid_lon = boundary.lat.mean(), boundary.lon.mean()
@@ -116,7 +118,7 @@ the hotspots - that is, the set of areas that capture the most crime for the tot
                 st.session_state.force,
                 st.session_state.spatial_unit_name,
                 st.session_state.category,
-                str(latest_month()),
+                str(latest_month),
                 st.session_state.observation_period * 12,
             )
 
@@ -216,7 +218,7 @@ the hotspots - that is, the set of areas that capture the most crime for the tot
         layers = [boundary_layer, hotspots]
 
         start, end = date_range(
-            latest_month() - st.session_state.observation_period * 12 + 1, st.session_state.observation_period * 12
+            latest_month - st.session_state.observation_period * 12 + 1, st.session_state.observation_period * 12
         )
         st.markdown(f"""
             ### {st.session_state.category} in {st.session_state.force} PFA

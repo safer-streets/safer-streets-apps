@@ -1,7 +1,6 @@
 import os
-from typing import Any, Literal, get_args
+from typing import Literal, get_args
 
-import geopandas as gpd
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
@@ -10,7 +9,7 @@ from itrx import Itr
 from safer_streets_core.api_helpers import fetch_gdf
 from safer_streets_core.utils import CATEGORIES, Force, Month, data_dir, fix_force_name, monthgen
 
-from safer_streets_apps.streamlit.common import date_range, get_oac, latest_month
+from safer_streets_apps.streamlit.common import date_range, get_oac
 
 st.set_page_config(layout="wide", page_title="Crime Hotspots", page_icon="👮")
 st.logo("./assets/safer-streets-small.png", size="large")
@@ -35,45 +34,22 @@ EW_AREA = 151_047.0  # according to wikipedia
 REF_LAT = 52.7
 REF_LON = -2.0
 
+# latest mont we have data for is 2025-12
+LATEST_MONTH = Month(2025, 12)
+
 
 @st.cache_data
 def get_counts(constraint: Constraint) -> pd.DataFrame:
-    # latest mont we have data for is 2025-12
-    latest_month = "2025-12"
     match constraint:
         case "National":
-            return pd.read_parquet(data_dir() / f"national_hotspots_{latest_month}.parquet")
+            return pd.read_parquet(data_dir() / f"national_hotspots_{LATEST_MONTH}.parquet")
         case "Equal":
-            return pd.read_parquet(data_dir() / f"force_hotspots_{latest_month}.parquet")
+            return pd.read_parquet(data_dir() / f"force_hotspots_{LATEST_MONTH}.parquet")
         case "Size":
-            return pd.read_parquet(data_dir() / f"headcount_hotspots_{latest_month}.parquet")
+            return pd.read_parquet(data_dir() / f"headcount_hotspots_{LATEST_MONTH}.parquet")
 
 
-# @st.cache_data
-# def get_national_counts() -> pd.DataFrame:
-#     return pd.read_parquet(data_dir() / f"national_hotspots_{latest_month()}.parquet")
-
-
-# @st.cache_data
-# def get_force_counts() -> pd.DataFrame:
-#     return pd.read_parquet(data_dir() / f"force_hotspots_{latest_month()}.parquet")
-
-
-@st.cache_data
-def simplified_pfa_boundaries() -> tuple[dict[str, Any], dict[str, Any]]:
-    force_boundaries = gpd.read_file(data_dir() / "Police_Force_Areas_December_2023_EW_BFE_2734900428741300179.zip")
-    # this should be significantly smaller than a hex (although its not used in a spatial join)
-    force_boundaries.geometry = force_boundaries.simplify(tolerance=50)
-    force_boundaries = force_boundaries.to_crs(epsg=4326)
-
-    return (
-        force_boundaries[force_boundaries.PFA23NM.isin(FORCES)][["PFA23NM", "geometry"]].__geo_interface__,
-        force_boundaries[~force_boundaries.PFA23NM.isin(FORCES)][["PFA23NM", "geometry"]].__geo_interface__,
-    )
-
-
-# TO 2025-12
-MONTHS = Itr(monthgen(Month(2025, 12), backwards=True)).take(N_MONTHS).rev().map(str).collect()
+MONTHS = Itr(monthgen(LATEST_MONTH, backwards=True)).take(N_MONTHS).rev().map(str).collect()
 
 
 def main() -> None:

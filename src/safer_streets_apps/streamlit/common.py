@@ -1,12 +1,11 @@
 from datetime import date
-from typing import Any
+from typing import Any, get_args
 
 import geopandas as gpd
 import pandas as pd
 import streamlit as st
 from dateutil.relativedelta import relativedelta
-from itrx import Itr
-from safer_streets_core.api_helpers import fetch_df, fetch_gdf
+from safer_streets_core.api_helpers import fetch_df, fetch_gdf, get, post
 from safer_streets_core.spatial import (
     SpatialUnit,
     get_demographics,
@@ -19,11 +18,10 @@ from safer_streets_core.utils import (
     Force,
     Month,
     data_dir,
+    fix_force_name,
     get_monthly_crime_counts,
     load_crime_data,
-    monthgen,
 )
-from safer_streets_core.utils import latest_month as core_latest_month
 
 
 @st.cache_data
@@ -40,37 +38,35 @@ def cache_demographic_data(force: Force) -> gpd.GeoDataFrame:
 
 
 @st.cache_data
-def latest_month() -> Month:
+def time_window() -> list[Month]:
     """
     This should ensure that if the crime data is updated, things won't immediately break
     Restart the app to update this
     """
-    return core_latest_month()
+    months = get("time_window")
+    return [Month.parse_str(m) for m in months]
 
 
 @st.cache_data
-def get_oac() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    hex_oa_mapping = pd.read_parquet(data_dir() / "hex-oa-mapping.parquet")
-    oac_desc = pd.read_csv(data_dir() / "classification_codes_and_names-1.csv").set_index("Classification Code")[
-        "Classification Name"
-    ]
-    oac_actual = (
-        pd.read_csv(data_dir() / "UK_OAC_Final.csv")
-        .set_index("Geography_Code")
-        .rename(columns={"Supergroup": "supergroup_code", "Group": "group_code", "Subgroup": "subgroup_code"})
+def get_oac(ids: list[str]) -> tuple["pd.Series[str]", pd.DataFrame, pd.DataFrame]:
+    h3_oa_mapping = pd.Series(
+        post("/geog_lookup", payload={"geography": "H3", "ids": ids, "resolution": 9, "target": "OA21"}), name="oa21cd"
     )
-    oac_actual.supergroup_code = oac_actual.supergroup_code.astype(str)
-    return hex_oa_mapping, oac_actual, oac_desc
+
+    # TODO? API endpoint?
+    oac_desc = pd.read_parquet(data_dir() / "extract/oac_classification.parquet").set_index("code")
+    oac_actual = pd.read_parquet(data_dir() / "extract/oac.parquet").set_index("spatial_id")
+    return h3_oa_mapping, oac_actual, oac_desc
 
 
-all_months = Itr(monthgen(latest_month(), backwards=True)).take(36).rev().collect()
+all_months = time_window()
 
 
-geographies = {
+geographies: dict[str, tuple[SpatialUnit, dict[str, Any]]] = {
+    "Local authority districts (2024)": ("LAD24", {}),
     "Middle layer Super Output Areas (census)": ("MSOA21", {}),
     "Lower layer Super Output Areas (census)": ("LSOA21", {}),
     "Output Areas (census)": ("OA21", {}),
-    "200m hexes": ("HEX", {"size": 200.0}),
     "H3(7)": ("H3", {"resolution": 7}),
     "H3(8)": ("H3", {"resolution": 8}),
     "H3(9)": ("H3", {"resolution": 9}),
@@ -79,7 +75,7 @@ geographies = {
 
 def get_counts_and_features_old(
     raw_data: gpd.GeoDataFrame, boundary: gpd.GeoDataFrame, spatial_unit: SpatialUnit, **spatial_unit_params: Any
-):
+) -> tuple[pd.DataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame]:
     crime_data, features = map_to_spatial_unit(raw_data, boundary, spatial_unit, **spatial_unit_params)
     # compute area in sensible units before changing crs!
     features["area_km2"] = features.area / 1_000_000
@@ -92,11 +88,31 @@ def get_counts_and_features_old(
     return counts, features, boundary
 
 
+# forces with complete data, named to match PFA23NM boundary data
+FORCES = tuple(
+    fix_force_name(f) for f in get_args(Force) if f not in ["BTP", "Greater Manchester", "Northern Ireland", "Gwent"]
+)
+
+
+@st.cache_data
+def simplified_pfa_boundaries() -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    force_boundaries = fetch_gdf("/features", params={"geography": "PFA23"})
+    # this should be significantly smaller than a hex (although its not used in a spatial join)
+    force_boundaries.geometry = force_boundaries.simplify(tolerance=50)
+    force_boundaries = force_boundaries.to_crs(epsg=4326)
+
+    active = force_boundaries.PFA23NM.isin(FORCES)
+    return (
+        force_boundaries[active][["PFA23NM", "geometry"]],
+        force_boundaries[~active][["PFA23NM", "geometry"]],
+    )
+
+
 @st.cache_data
 def get_boundary(force: Force) -> gpd.GeoDataFrame:
     # returns EPSG:4326, with area
     boundary = fetch_gdf("/pfa_geodata", params={"force": force})
-    return boundary.set_index("spatial_unit")
+    return boundary.set_index("spatial_id")
 
 
 @st.cache_data
@@ -118,15 +134,15 @@ def get_counts_and_features(
             }
             | spatial_unit_params,
         )
-        .set_index(["spatial_unit", "month"])["count"]
+        .set_index(["spatial_id", "month"])["count"]
         .unstack(level="month", fill_value=0)
     )
 
     # GeoDataFrame.to_json resets the index and names it to "id"
     features = (
         fetch_gdf("/features", http_post=True, payload={"geography": spatial_unit, "ids": counts.index.to_list()})
-        .rename(columns={"id": "spatial_unit"})
-        .set_index("spatial_unit", drop=True)
+        .rename(columns={"id": "spatial_id"})
+        .set_index("spatial_id", drop=True)
     )
     # get the areas
     features["area_km2"] = features.area / 1_000_000

@@ -1,26 +1,149 @@
+"""
+This implementation avoids the API and uses duckdb (in-memory+azure parquet) directly
+"""
+
+from datetime import date
 from typing import cast, get_args
 
+import geopandas as gpd
+import pandas as pd
 import pydeck as pdk
 import streamlit as st
-from safer_streets_core.utils import CATEGORIES, DEFAULT_FORCE, Force, Month
-
-from safer_streets_apps.streamlit.common import (
-    all_months,
-    cache_demographic_data,
-    date_range,
-    geographies,
-    get_boundary,
-    get_counts_and_features,
-    get_ethnicity,
-    get_ethnicity_totals,
-    get_ordered_counts,
-)
+from dateutil.relativedelta import relativedelta
+from dotenv import load_dotenv
+from itrx import Itr
+from safer_streets_core.database import duckdb_connector, get_gdf
+from safer_streets_core.utils import CATEGORIES, DEFAULT_FORCE, CrimeType, Force, Month, fix_force_name, monthgen
 
 st.set_page_config(layout="wide", page_title="Crime Capture", page_icon="👮")
 st.logo("./assets/safer-streets-small.png", size="large")
 
+load_dotenv()
+
+
+# geography -> (spatial unit column, H3 lookup table, crime count table, boundary parquet (None for H3:
+# cell geometry is computed on the fly from the cell id))
+geographies: dict[str, tuple[str, str, str, str | None]] = {
+    "Local authority districts (2024)": (
+        "lad24cd AS spatial_id",
+        "h3_8_geogs",
+        "crime_counts_lad24cd",
+        "local_authority_districts",
+    ),
+    "Middle layer Super Output Areas (census)": (
+        "msoa21cd AS spatial_id",
+        "h3_8_geogs",
+        "crime_counts_msoa21cd",
+        "msoa_2021",
+    ),
+    "Lower layer Super Output Areas (census)": (
+        "lsoa21cd AS spatial_id",
+        "h3_8_geogs",
+        "crime_counts_lsoa21cd",
+        "lsoa_2021",
+    ),
+    "Output Areas (census)": ("oa21cd AS spatial_id", "h3_8_geogs", "crime_counts_oa21cd", "output_areas_2021"),
+    "H3(8)": ("spatial_id", "h3_8_geogs", "crime_counts_h3_8", None),
+    "H3(9)": ("spatial_id", "h3_9_geogs", "crime_counts_h3_9", None),
+    "H3(10)": ("spatial_id", "h3_10_geogs", "crime_counts_h3_10", None),
+}
+
+
+def date_range(start_month: Month, n_months: int) -> tuple[date, date]:
+    start_date = date(start_month.year, start_month.month, 1)
+    end_date = start_date + relativedelta(months=n_months, days=-1)
+    return start_date, end_date
+
+
+@st.cache_data
+def all_months() -> tuple[Month, ...]:
+    raw = st.session_state.con.sql("""
+    SELECT DISTINCT _month FROM read_parquet('az://phase2/extract/crime_data.parquet')
+    ORDER BY _month
+    """).fetchall()
+    return tuple(Month.parse_str(m[0]) for m in raw)
+
+
+@st.cache_data
+def get_boundary(force: Force) -> gpd.GeoDataFrame:
+    return get_gdf(
+        st.session_state.con,
+        """
+    SELECT spatial_id, *, ST_Area(geom) AS area, ST_AsText(ST_Transform(geom, 'EPSG:27700', 'EPSG:4326', always_xy := true)) AS wkt
+    FROM read_parquet('az://phase2/extract/police_force_areas.parquet')
+    WHERE pfa23nm = ?
+    """,
+        params=(fix_force_name(force),),
+    )
+
+
+@st.cache_data
+def get_counts_and_features(
+    force: Force, geography: str, category: CrimeType, month: str, lookback: int
+) -> tuple[gpd.GeoDataFrame, pd.DataFrame]:
+
+    spatial_unit, feature_table, count_table, boundary_table = geographies[geography]
+
+    months = Itr(monthgen(Month.parse_str(month), backwards=True)).take(lookback).map(str).collect()
+
+    if boundary_table is None:
+        features = get_gdf(
+            st.session_state.con,
+            f"""
+            SELECT
+                spatial_id,
+                cell_area / 1000000 AS area_km2,
+                h3_cell_to_boundary_wkt(spatial_id) AS wkt
+            FROM read_parquet('az://phase2/transform/{feature_table}.parquet')
+            WHERE pfa23cd = (
+                SELECT spatial_id FROM read_parquet('az://phase2/extract/police_force_areas.parquet')
+                WHERE pfa23nm = ?
+            )
+            """,
+            crs="EPSG:4326",
+            params=(fix_force_name(force),),
+        ).set_index("spatial_id")
+    else:
+        features = get_gdf(
+            st.session_state.con,
+            f"""
+            WITH ids AS (
+                SELECT DISTINCT {spatial_unit} FROM read_parquet('az://phase2/transform/{feature_table}.parquet')
+                WHERE pfa23cd = (
+                    SELECT spatial_id FROM read_parquet('az://phase2/extract/police_force_areas.parquet')
+                    WHERE pfa23nm = ?
+                )
+            )
+            SELECT
+                spatial_id,
+                ST_Area(geom) / 1000000 AS area_km2,
+                ST_AsText(ST_Transform(geom, 'EPSG:27700', 'EPSG:4326', always_xy := true)) AS wkt
+            FROM read_parquet('az://phase2/extract/{boundary_table}.parquet')
+            WHERE spatial_id IN (SELECT spatial_id FROM ids)
+            """,
+            crs="EPSG:4326",
+            params=(fix_force_name(force),),
+        ).set_index("spatial_id")
+
+    counts = (
+        st.session_state.con.sql(
+            f"""
+        SELECT spatial_id, SUM(count) AS n_crimes FROM read_parquet('az://phase2/transform/{count_table}.parquet')
+        WHERE spatial_id IN ? AND crime_type = ? AND month IN ?
+        GROUP BY spatial_id
+        """,
+            params=(features.index.tolist(), category, months),
+        )
+        .df()
+        .set_index("spatial_id")
+    )
+
+    return features, counts
+
 
 def init() -> None:
+    if "con" not in st.session_state:
+        st.session_state.con = duckdb_connector(azure=True, writeable=False)
     if "force" not in st.session_state:
         st.session_state.force = get_args(Force)[DEFAULT_FORCE]
     if "category" not in st.session_state:
@@ -34,19 +157,12 @@ def init() -> None:
     if "show_missed" not in st.session_state:
         st.session_state.show_missed = False
     if "month" not in st.session_state:
-        st.session_state.month = all_months[-1]
-    if "demographics" not in st.session_state:
-        st.session_state.demographics = False
+        st.session_state.month = all_months()[-1]
 
 
 def main() -> None:
     init()
     st.title("Crime Capture Explorer")
-
-    st.warning(
-        "##### :construction: This page uses the experimental Safer Streets [geospatial data API]"
-        "(https://uol-a011-prd-uks-wkld025-asp1-api1-acdkeudzafe8dtc9.uksouth-01.azurewebsites.net/docs#/)"
-    )
 
     st.markdown("## Highlighting crime hotspots")
 
@@ -82,17 +198,6 @@ its crime and demographics (Hover on the force area boundary for average values.
         "Spatial Unit", geographies.keys(), index=list(geographies.keys()).index(st.session_state.spatial_unit_name)
     )
 
-    # m = folium.Map(location=[53.924, -1.832], zoom_start=16)
-
-    # # add marker
-    # tooltip = "Tooltip"
-    # folium.Marker(
-    #     [53.9228, -1.8326], popup="?", tooltip=tooltip
-    # ).add_to(m)
-
-    # # call to render Folium map in Streamlit
-    # sf.folium_static(m, width=800)
-
     st.session_state.area_threshold = st.sidebar.slider(
         "Coverage (km²)",
         1.0,
@@ -123,23 +228,17 @@ its crime and demographics (Hover on the force area boundary for average values.
 
     st.session_state.month = st.sidebar.select_slider(
         "Month selection",
-        all_months[st.session_state.lookback_window - 1 :],
+        all_months()[st.session_state.lookback_window - 1 :],
         value=st.session_state.month,
         format_func=display_name,
         help="Select month",
     )
 
-    st.session_state.demographics = st.sidebar.checkbox(
-        "Show feature demographics",
-        help="Include a breakdown of the population by ethnicity in each feature, if available. "
-        "NB this is resource-intensive and will slow the app down significantly",
-    )
-
     try:
         with st.spinner("Loading crime and geographic data..."):
             boundary = get_boundary(st.session_state.force)
-            total_area = boundary["area"].sum()
-            centroid_lat, centroid_lon = boundary.lat.mean(), boundary.lon.mean()
+            total_area = boundary["area"].sum() / 1_000_000
+            centroid_lat, centroid_lon = boundary.lat.mean(), boundary.long.mean()
 
             features, counts = get_counts_and_features(
                 st.session_state.force,
@@ -149,55 +248,28 @@ its crime and demographics (Hover on the force area boundary for average values.
                 st.session_state.lookback_window,
             )
 
-        # process data
-        if st.session_state.demographics:
-            with st.spinner("Processing demographic data..."):
-                try:
-                    raw_population = cache_demographic_data(st.session_state.force)
-                except FileNotFoundError as e:
-                    st.warning(e)
-                    raw_population = None
-
-        else:
-            raw_population = None
-        ethnicity = get_ethnicity(raw_population, features)
-        ethnicity_total = get_ethnicity_totals(raw_population, st.session_state.force)
-
         with st.spinner("Processing crime data..."):
-            ordered_counts = get_ordered_counts(counts, st.session_state.month, features)
+            # ordered_counts = get_ordered_counts(counts, st.session_state.month, features)
+
+            ordered_counts = features.join(counts, how="right")
+            ordered_counts["density"] = ordered_counts.n_crimes / ordered_counts.area_km2
+            ordered_counts = ordered_counts.sort_values(by="density", ascending=False)
+            # cum area not including current row
+            ordered_counts["cum_area"] = ordered_counts.area_km2.cumsum().shift(fill_value=0)
 
             # make boundary work with the tooltip
             boundary["n_crimes"] = ordered_counts.n_crimes.sum()
-            boundary["population"] = ethnicity_total.sum()
-            # this makes the toolips nice but prevents numerical sorting
-            for eth in ethnicity_total.index:
-                boundary[eth] = f"{ethnicity_total[eth] / ethnicity_total.sum():.1%}"
-            boundary["n_crimes"] = ordered_counts.n_crimes.sum()
-
-            # add tooltip info for the features
-            tooltip_info = ethnicity.sum(axis=1).rename("population").to_frame()
-            for colname, values in ethnicity.div(ethnicity.sum(axis=1), axis=0).fillna(0).items():
-                tooltip_info[colname] = values.apply(lambda x: f"{x:.1%}")
-            tooltip_info["name"] = ethnicity.index
 
             # deal with case where we've captured all incidents in a smaller area than specified
-            captured_features = features[["geometry"]].join(
-                ordered_counts[
-                    (ordered_counts.cum_area < st.session_state.area_threshold) & (ordered_counts.n_crimes > 0)
-                ],
-                how="right",
-            )
-            captured_features = captured_features.join(tooltip_info)
+            captured_features = ordered_counts[
+                (ordered_counts.cum_area < st.session_state.area_threshold) & (ordered_counts.n_crimes > 0)
+            ]
             captured_features["opacity"] = 192 * captured_features.n_crimes / captured_features.n_crimes.max()
 
             if st.session_state.show_missed:
-                missed_features = features[["geometry"]].join(
-                    ordered_counts[
-                        (ordered_counts.cum_area > st.session_state.area_threshold) & (ordered_counts.n_crimes > 0)
-                    ],
-                    how="right",
-                )
-                missed_features = missed_features.join(tooltip_info)
+                missed_features = ordered_counts[
+                    (ordered_counts.cum_area > st.session_state.area_threshold) & (ordered_counts.n_crimes > 0)
+                ]
                 missed_features["opacity"] = 96 * missed_features.n_crimes / missed_features.n_crimes.max()
 
         # render map
@@ -265,11 +337,7 @@ its crime and demographics (Hover on the force area boundary for average values.
             which comprise {captured_features.area_km2.sum() / total_area:.2%} of the PFA ({total_area:.1f}km²)**
             """)
 
-        tooltip = {
-            "html": "Feature {name} crimes: {n_crimes}<br/>"
-            "Population: {population} (2021 census)<br/>"
-            + "<br/>".join(f"{eth}: {{{eth}}}" for eth in ethnicity.columns)
-        }
+        tooltip = {"html": "Feature {name} crimes: {n_crimes}<br/>"}
 
         st.pydeck_chart(
             pdk.Deck(map_style=st.context.theme.type, layers=layers, initial_view_state=view_state, tooltip=tooltip),
@@ -279,7 +347,7 @@ its crime and demographics (Hover on the force area boundary for average values.
         with st.expander("Hotspot Table"):
             st.dataframe(boundary.drop(columns="geometry"))  # .style.format("{:.1%}", subset=ethnicity.columns))
             st.dataframe(
-                captured_features.drop(columns=["geometry", "cum_area", "name", "opacity"]).sort_values(
+                captured_features.drop(columns=["geometry", "cum_area", "opacity"]).sort_values(
                     by="n_crimes", ascending=False
                 )
             )
